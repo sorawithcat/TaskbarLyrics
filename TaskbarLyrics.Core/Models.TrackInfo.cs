@@ -5,4 +5,5 @@ public sealed record TrackInfo(
     string Title,
     string Artist,
     string SourceApp,
-    TimeSpan Duration);
+    TimeSpan Duration,
+    string? SongId = null);

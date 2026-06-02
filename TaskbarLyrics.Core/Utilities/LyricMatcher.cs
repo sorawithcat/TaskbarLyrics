@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using F23.StringSimilarity;
 using TaskbarLyrics.Core.Models;
 
 namespace TaskbarLyrics.Core.Utilities;
@@ -11,19 +12,12 @@ public static class LyricMatcher
     private static readonly Regex FeatureSuffixRegex = new(@"\s+(feat\.?|ft\.?|with)\s+.*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly string[] ConflictKeywords = { "live", "remix", "acoustic", "demo", "instrumental", "vma", "award", "现场", "演唱会", "颁奖", "典礼" };
 
+    // JaroWinkler 算法，适合短文本匹配
+    private static readonly JaroWinkler JaroWinklerAlgo = new();
+
     public static int Score(TrackInfo target, string resultTitle, string resultArtist, int resultDurationInSeconds = 0)
     {
-        if (string.IsNullOrWhiteSpace(resultTitle)) return 0;
-
-        // 1. 时长硬约束 (Duration Constraint) - 偏差超过 40 秒直接否决
-        int durationScore = 100;
-        if (target.Duration.TotalSeconds > 1 && resultDurationInSeconds > 0)
-        {
-            var diff = Math.Abs(target.Duration.TotalSeconds - resultDurationInSeconds);
-            if (diff > 45) return 0;
-            if (diff > 10) durationScore -= 40;
-            else if (diff > 5) durationScore -= 15;
-        }
+        if (IsUnknownTitle(target.Title) || IsUnknownTitle(resultTitle)) return 0;
 
         // 2. 版本冲突检测 (Conflict Detection)
         foreach (var keyword in ConflictKeywords)
@@ -31,35 +25,117 @@ public static class LyricMatcher
             if (HasVersionConflict(target.Title, resultTitle, keyword)) return 0;
         }
 
-        // 3. 归一化对比 (Normalization 2.0)
-        var cleanedTargetTitle = NormalizeForSearch(target.Title);
-        var cleanedTargetArtist = NormalizeForSearch(target.Artist);
-        var cleanedResultTitle = NormalizeForSearch(resultTitle);
-        var cleanedResultArtist = NormalizeForSearch(resultArtist);
+        var normalizedTargetTitle = NormalizeForSearch(target.Title);
+        var normalizedResultTitle = NormalizeForSearch(resultTitle);
+        var normalizedTargetArtist = NormalizeForSearch(target.Artist);
+        var normalizedResultArtist = NormalizeForSearch(resultArtist);
 
-        // 4. 相似度计算 (Levenshtein)
-        double titleSim = CalculateSimilarity(cleanedTargetTitle, cleanedResultTitle);
-        double artistSim = CalculateSimilarity(cleanedTargetArtist, cleanedResultArtist);
+        double titleSim = GetStringSimilarity(normalizedTargetTitle, normalizedResultTitle);
+        double artistSim = GetStringSimilarity(normalizedTargetArtist, normalizedResultArtist);
+        double durationSim = GetDurationSimilarity(target.Duration.TotalSeconds, resultDurationInSeconds);
 
-        // 5. 准入阈值：标题相似度必须达到 0.7 或 包含关系
-        if (titleSim < 0.7 && !cleanedResultTitle.Contains(cleanedTargetTitle) && !cleanedTargetTitle.Contains(cleanedResultTitle))
+        if (!IsTitleMatchAcceptable(normalizedTargetTitle, normalizedResultTitle, titleSim))
+        {
+            Log.Debug($"LyricMatcher rejected title mismatch: '{target.Title}' vs '{resultTitle}' ({titleSim:F2})");
             return 0;
+        }
 
-        // 6. 综合评分 (权重: Title 60, Artist 25, Duration 15)
-        int score = 0;
-        score += (int)(titleSim * 60);
-        score += (int)(artistSim * 25);
-        score += (int)(durationScore * 0.15);
+        bool hasTargetArtist = HasUsefulArtist(normalizedTargetArtist);
+        bool hasResultArtist = HasUsefulArtist(normalizedResultArtist);
+        if (hasTargetArtist &&
+            hasResultArtist &&
+            artistSim < 0.45 &&
+            !HasArtistOverlap(normalizedTargetArtist, normalizedResultArtist))
+        {
+            Log.Debug($"LyricMatcher rejected artist mismatch: '{target.Artist}' vs '{resultArtist}' ({artistSim:F2})");
+            return 0;
+        }
 
-        // 7. 特殊奖励
-        if (cleanedTargetTitle == cleanedResultTitle) score += 5;
-        if (cleanedTargetArtist == cleanedResultArtist) score += 5;
+        bool hasDuration = target.Duration.TotalSeconds > 0 && resultDurationInSeconds > 0;
+        if (hasDuration && Math.Abs(target.Duration.TotalSeconds - resultDurationInSeconds) >= 20)
+        {
+            Log.Debug($"LyricMatcher rejected duration mismatch: {target.Duration.TotalSeconds:F0}s vs {resultDurationInSeconds}s");
+            return 0;
+        }
 
-        // 8. 歌手包含奖励 (处理合唱情况)
-        if (artistSim < 1.0 && (cleanedResultArtist.Contains(cleanedTargetArtist) || cleanedTargetArtist.Contains(cleanedResultArtist)))
-            score += 10;
+        double totalScore;
+        if (hasTargetArtist && hasResultArtist && hasDuration)
+        {
+            totalScore = (titleSim * 0.50) + (artistSim * 0.30) + (durationSim * 0.20);
+        }
+        else if (hasTargetArtist && hasResultArtist)
+        {
+            totalScore = (titleSim * 0.60) + (artistSim * 0.40);
+        }
+        else if (hasDuration)
+        {
+            totalScore = (titleSim * 0.75) + (durationSim * 0.25);
+        }
+        else
+        {
+            totalScore = titleSim;
+        }
 
-        return Math.Clamp(score, 0, 100);
+        Log.Debug($"LyricMatcher: TitleSim={titleSim:F2}, ArtistSim={artistSim:F2}, DurationSim={durationSim:F2} -> BaseScore={(int)Math.Round(totalScore * 100)}");
+        return (int)Math.Round(totalScore * 100);
+    }
+
+    private static double GetStringSimilarity(string? s1, string? s2)
+    {
+        s1 = NormalizeForSearch(s1);
+        s2 = NormalizeForSearch(s2);
+
+        if (string.IsNullOrEmpty(s1) && string.IsNullOrEmpty(s2)) return 1.0;
+        if (string.IsNullOrEmpty(s1) || string.IsNullOrEmpty(s2)) return 0.0;
+
+        return JaroWinklerAlgo.Similarity(s1, s2);
+    }
+
+    private static double GetDurationSimilarity(double localSeconds, double? remoteSeconds)
+    {
+        if (remoteSeconds == null || remoteSeconds == 0 || localSeconds <= 0) return 0.0;
+
+        double diff = Math.Abs(localSeconds - remoteSeconds.Value);
+
+        // 差距 <= 1 秒：100% 相似
+        // 差距 >= 10 秒：0% 相似
+        // 中间线性插值
+        const double PerfectTolerance = 1.0;
+        const double MaxTolerance = 10.0;
+
+        if (diff <= PerfectTolerance) return 1.0;
+        if (diff >= MaxTolerance) return 0.0;
+
+        return 1.0 - ((diff - PerfectTolerance) / (MaxTolerance - PerfectTolerance));
+    }
+
+    private static bool IsTitleMatchAcceptable(string targetTitle, string resultTitle, double similarity)
+    {
+        if (string.IsNullOrWhiteSpace(targetTitle) || string.IsNullOrWhiteSpace(resultTitle)) return false;
+        if (similarity >= 0.72) return true;
+
+        return targetTitle.Length >= 3 &&
+               resultTitle.Length >= 3 &&
+               (targetTitle.Contains(resultTitle, StringComparison.Ordinal) ||
+                resultTitle.Contains(targetTitle, StringComparison.Ordinal));
+    }
+
+    private static bool HasUsefulArtist(string normalizedArtist)
+    {
+        return !string.IsNullOrWhiteSpace(normalizedArtist) &&
+               !string.Equals(normalizedArtist, "unknown artist", StringComparison.Ordinal);
+    }
+
+    private static bool IsUnknownTitle(string? title)
+    {
+        return string.IsNullOrWhiteSpace(title) ||
+               string.Equals(title.Trim(), "Unknown Title", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasArtistOverlap(string targetArtist, string resultArtist)
+    {
+        return targetArtist.Contains(resultArtist, StringComparison.Ordinal) ||
+               resultArtist.Contains(targetArtist, StringComparison.Ordinal);
     }
 
     public static string NormalizeForSearch(string? value)
@@ -105,24 +181,5 @@ public static class LyricMatcher
         bool targetHas = target.Contains(keyword, StringComparison.OrdinalIgnoreCase);
         bool resultHas = result.Contains(keyword, StringComparison.OrdinalIgnoreCase);
         return targetHas != resultHas;
-    }
-
-    private static double CalculateSimilarity(string s, string t)
-    {
-        if (string.IsNullOrEmpty(s) || string.IsNullOrEmpty(t)) return 0;
-        if (s == t) return 1.0;
-        int n = s.Length, m = t.Length;
-        int[,] d = new int[n + 1, m + 1];
-        for (int i = 0; i <= n; d[i, 0] = i++) ;
-        for (int j = 0; j <= m; d[0, j] = j++) ;
-        for (int i = 1; i <= n; i++)
-        {
-            for (int j = 1; j <= m; j++)
-            {
-                int cost = (t[j - 1] == s[i - 1]) ? 0 : 1;
-                d[i, j] = Math.Min(Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1), d[i - 1, j - 1] + cost);
-            }
-        }
-        return 1.0 - ((double)d[n, m] / Math.Max(s.Length, t.Length));
     }
 }

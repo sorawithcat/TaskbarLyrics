@@ -15,13 +15,13 @@ public abstract class LyricProviderBase : ILyricProvider
     // --- BetterLyrics 风格的严苛正则 ---
     
     // 只匹配标准 LRC 时间轴，不进行模糊匹配
-    private static readonly Regex LrcLineRegex = new(@"^\[(\d+)[:：](\d+)(?:[\.\uFF0E:：](\d{1,3}))?\](.*)$", RegexOptions.Compiled);
+    private static readonly Regex LrcTimestampRegex = new(@"\[(\d+)[:：](\d+)(?:[\.\uFF0E:：](\d{1,3}))?\]", RegexOptions.Compiled);
     
     // 专门移除行内的 QRC 逐字标签（如 <00:12.34>）
     private static readonly Regex InnerTagRegex = new(@"<[^>]+>", RegexOptions.Compiled);
     
     // 偏移量解析
-    private static readonly Regex OffsetRegex = new(@"\[offset\s*[:：]\s*(?<val>-?\d+)\]", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex OffsetRegex = new(@"\[offset\s*[:：]\s*(?<val>[+-]?\d+)\]", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     // 辅助正则 (用于匹配匹配得分逻辑)
     private static readonly Regex GlobalBracketRegex = new(@"[\[［\(（【][^[\]］\)）】【]*?[\]］\)）】【]", RegexOptions.Compiled);
@@ -45,7 +45,7 @@ public abstract class LyricProviderBase : ILyricProvider
 
     public async Task<LyricDocument?> GetLyricsAsync(TrackInfo track, CancellationToken cancellationToken)
     {
-        var cacheKey = BuildCacheKey(track.Title, track.Artist);
+        var cacheKey = BuildCacheKey(track);
         if (MemoryCache.TryGetValue(cacheKey, out var cachedDoc)) return cachedDoc;
 
         lock (DiskCacheLock)
@@ -184,24 +184,27 @@ public abstract class LyricProviderBase : ILyricProvider
 
         foreach (var line in lines)
         {
-            var match = LrcLineRegex.Match(line.Trim());
-            if (!match.Success) continue;
+            var trimmedLine = line.Trim();
+            var matches = LrcTimestampRegex.Matches(trimmedLine);
+            if (matches.Count == 0) continue;
 
-            // 提取时间
-            int min = int.Parse(match.Groups[1].Value);
-            int sec = int.Parse(match.Groups[2].Value);
-            int ms = ParseMillisecond(match.Groups[3].Value);
-            var ts = new TimeSpan(0, 0, min, sec, ms).Add(TimeSpan.FromMilliseconds(offsetMs));
-
-            // 提取内容
-            string rawContent = match.Groups[4].Value;
+            // 提取内容：多时间戳行共用最后一个时间戳之后的歌词文本。
+            var textStart = matches[^1].Index + matches[^1].Length;
+            string rawContent = textStart < trimmedLine.Length ? trimmedLine[textStart..] : string.Empty;
             
             // 精准净化
             string cleanedContent = BetterLyrics_Sanitize(rawContent);
 
             if (string.IsNullOrWhiteSpace(cleanedContent)) continue;
 
-            resultList.Add(new LyricLine(ts, cleanedContent));
+            foreach (Match match in matches)
+            {
+                int min = int.Parse(match.Groups[1].Value);
+                int sec = int.Parse(match.Groups[2].Value);
+                int ms = ParseMillisecond(match.Groups[3].Value);
+                var timestamp = new TimeSpan(0, 0, min, sec, ms).Add(TimeSpan.FromMilliseconds(offsetMs));
+                resultList.Add(new LyricLine(ClampTimestamp(timestamp), cleanedContent));
+            }
         }
 
         return AlignBilingualLyrics(resultList);
@@ -263,10 +266,18 @@ public abstract class LyricProviderBase : ILyricProvider
         return fractionRaw.Length switch { 1 => int.Parse(fractionRaw) * 100, 2 => int.Parse(fractionRaw) * 10, _ => int.Parse(fractionRaw[..3]) }; 
     }
 
+    private static TimeSpan ClampTimestamp(TimeSpan timestamp)
+    {
+        return timestamp < TimeSpan.Zero ? TimeSpan.Zero : timestamp;
+    }
+
     // ========================================================
     // ✅ 匹配与得分逻辑 (此前被误删)
     // ========================================================
-    protected string BuildCacheKey(string title, string artist) => $"{SourceApp}|{NormalizeForCache(title)}|{NormalizeForCache(artist)}";
+    protected string BuildCacheKey(TrackInfo track)
+    {
+        return $"{SourceApp}|{NormalizeForCache(track.Title)}|{NormalizeForCache(track.Artist)}|{NormalizeDurationForCache(track.Duration)}";
+    }
 
     private string NormalizeForCache(string s) 
     { 
@@ -274,6 +285,13 @@ public abstract class LyricProviderBase : ILyricProvider
         var sb = new StringBuilder(); 
         foreach (var ch in n) if (char.IsLetterOrDigit(ch)) sb.Append(ch); 
         return sb.ToString(); 
+    }
+
+    private static int NormalizeDurationForCache(TimeSpan duration)
+    {
+        return duration > TimeSpan.Zero
+            ? (int)Math.Round(duration.TotalSeconds / 2, MidpointRounding.AwayFromZero) * 2
+            : 0;
     }
 
     protected string NormalizeForSearch(string? value)
@@ -346,5 +364,25 @@ public abstract class LyricProviderBase : ILyricProvider
         } catch { } 
     }
 
-    private static string CacheFilePathStatic => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskbarLyrics", "cache", "unified-lyrics-v3.json");
+    public static void ClearCache()
+    {
+        lock (DiskCacheLock)
+        {
+            _diskCache = new Dictionary<string, LyricDocument>(StringComparer.OrdinalIgnoreCase);
+            MemoryCache.Clear();
+            try
+            {
+                if (File.Exists(CacheFilePathStatic))
+                {
+                    File.Delete(CacheFilePathStatic);
+                }
+            }
+            catch
+            {
+                // Ignore delete errors
+            }
+        }
+    }
+
+    private static string CacheFilePathStatic => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskbarLyrics", "cache", "unified-lyrics-v5.json");
 }

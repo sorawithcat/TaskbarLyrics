@@ -14,11 +14,10 @@ using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using Microsoft.Win32;
-using TaskbarLyrics.Adapters.Netease;
-using TaskbarLyrics.Adapters.QQMusic;
 using TaskbarLyrics.Core.Abstractions;
 using TaskbarLyrics.Core.Models;
 using TaskbarLyrics.Core.Services;
+using TaskbarLyrics.Core.Utilities;
 
 namespace TaskbarLyrics.App;
 
@@ -42,10 +41,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _suppressPromotedSizeAnimation;
     private bool _isLineTransitionAnimating;
     private LyricSyncService _lyricSyncService;
-    private string _currentLine = "TaskbarLyrics started";
-    private string _nextLine = "Waiting for lyrics...";
-    private string _displayCurrentLine = "TaskbarLyrics started";
-    private string _displayNextLine = "Waiting for lyrics...";
+    private string _currentLine = "TaskbarLyrics 已启动";
+    private string _nextLine = "等待歌词...";
+    private string _displayCurrentLine = "TaskbarLyrics 已启动";
+    private string _displayNextLine = "等待歌词...";
     private string? _pendingCurrentLine;
     private string? _pendingNextLine;
     private string? _lastCoverTrackId;
@@ -66,6 +65,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private EventInfo? _lyricsNavigationCompletedEvent;
     private Delegate? _lyricsNavigationCompletedHandler;
     private bool _usingCompositionWebView;
+    private DateTimeOffset _nextTickDiagnosticsLogUtc;
 
     public MainWindow()
     {
@@ -134,9 +134,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public void ApplySettings(AppSettings settings)
     {
+        Log.SetVerboseEnabled(settings.EnableSmtcTimelineMonitor);
+
         if (_musicSessionProvider is SmtcMusicSessionProvider smtcProvider)
         {
-            smtcProvider.SetRecognitionOrder(settings.SourceRecognitionOrder);
+            smtcProvider.SetRecognitionOrder(
+                settings.SourceRecognitionOrder,
+                BuildEnabledPlayerSources(settings));
         }
 
         Width = Math.Clamp(settings.WindowWidth, 320, 1400);
@@ -181,12 +185,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _primaryTextColor.B);
         SetLineBrushes(1.0, SecondaryLineBrightness, SecondaryLineBrightness);
 
-        // Web renderer is now fully transparent by design.
+        // Keep the WPF host transparent; the WebView draws the optional surface.
         RootBorder.Background = Media.Brushes.Transparent;
         RootBorder.BorderBrush = Media.Brushes.Transparent;
         RootBorder.BorderThickness = new Thickness(0);
 
-        _lyricSyncService = BuildLyricSyncService();
+        _lyricSyncService.Dispose();
+        _lyricSyncService = BuildLyricSyncService(settings);
         AnchorToTaskbar();
         AttachToTaskbarHost();
         ResetLineTransforms();
@@ -199,16 +204,37 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private LyricSyncService BuildLyricSyncService()
+    private static IReadOnlyCollection<string> BuildEnabledPlayerSources(AppSettings settings)
+    {
+        var sources = new List<string>();
+        if (settings.EnableQQMusic) sources.Add("QQMusic");
+        if (settings.EnableNetease) sources.Add("Netease");
+        if (settings.EnableKugou) sources.Add("Kugou");
+        if (settings.EnableSpotify) sources.Add("Spotify");
+        return sources;
+    }
+
+    private LyricSyncService BuildLyricSyncService(AppSettings? settings = null)
     {
         var providers = new List<ILyricProvider>
         {
-            new LrcLibLyricProvider(),
-            new GenericSmtcLyricProvider(),
-            new NeteaseLyricProvider(),
-            new QQMusicLyricProvider()
+            new GenericSmtcLyricProvider()
         };
 
+        if (settings?.EnableNetease != false)
+        {
+            providers.Add(new LyricifyLyricProvider("Netease", Lyricify.Lyrics.Searchers.Searchers.Netease));
+        }
+
+        if (settings?.EnableQQMusic != false)
+        {
+            providers.Add(new LyricifyLyricProvider("QQMusic", Lyricify.Lyrics.Searchers.Searchers.QQMusic));
+        }
+
+        if (settings?.EnableKugou != false)
+        {
+            providers.Add(new LyricifyLyricProvider("Kugou", Lyricify.Lyrics.Searchers.Searchers.Kugou));
+        }
         return new LyricSyncService(new LyricProviderRegistry(providers));
     }
 
@@ -271,6 +297,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         DetachWebViewNavigationHandler();
 
         Media.CompositionTarget.Rendering -= OnCompositionRendering;
+        _lyricSyncService.Dispose();
     }
 
     private void UpdateSmtcTimelineMonitorWindow()
@@ -328,6 +355,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         });
     }
 
+    private static readonly object LogLock = new();
+    private static void LogToFile(string message)
+    {
+        try
+        {
+            var logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app_debug.log");
+            lock (LogLock)
+            {
+                File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}\n");
+            }
+        }
+        catch {}
+    }
+
     private async void OnTimerTick(object? sender, EventArgs e)
     {
         if (_isTimerTickRunning)
@@ -342,13 +383,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             var snapshot = await _musicSessionProvider.GetCurrentAsync();
             var frame = await _lyricSyncService.GetDisplayFrameAsync(snapshot);
+            LogTickDiagnostics(snapshot, frame);
+
             if (_musicSessionProvider is SmtcMusicSessionProvider smtcProvider)
             {
                 smtcProvider.SetCurrentLyricSource(_lyricSyncService.CurrentLyricSourceApp);
             }
 
             var current = string.IsNullOrWhiteSpace(frame.CurrentLine)
-                ? "Searching for lyrics..."
+                ? "等待播放..."
                 : frame.CurrentLine;
 
             var next = frame.NextLine;
@@ -361,7 +404,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
         catch (Exception ex)
         {
-            _currentLine = $"Lyric service error: {ex.Message}";
+            LogToFile($"EXCEPTION in OnTimerTick: {ex}");
+            _currentLine = $"歌词服务异常: {ex.Message}";
             _nextLine = string.Empty;
             DisplayCurrentLine = _currentLine;
             DisplayNextLine = _nextLine;
@@ -372,6 +416,26 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             _isTimerTickRunning = false;
         }
+    }
+
+    private void LogTickDiagnostics(PlaybackSnapshot snapshot, LyricDisplayFrame frame)
+    {
+        if (!_enableSmtcTimelineMonitor || DateTimeOffset.UtcNow < _nextTickDiagnosticsLogUtc)
+        {
+            return;
+        }
+
+        _nextTickDiagnosticsLogUtc = DateTimeOffset.UtcNow.AddSeconds(1);
+        if (snapshot.Track is null)
+        {
+            LogToFile("SMTC: No active track found (Track is null)");
+        }
+        else
+        {
+            LogToFile($"SMTC: Title='{snapshot.Track.Title}', Artist='{snapshot.Track.Artist}', App='{snapshot.Track.SourceApp}', Playing={snapshot.IsPlaying}, Pos={snapshot.Position}, CoverLen={snapshot.CoverImageBytes?.Length ?? 0}");
+        }
+
+        LogToFile($"Sync: Current='{frame.CurrentLine}', Next='{frame.NextLine}', Prog={frame.LineProgress:F3}, SourceApp='{_lyricSyncService.CurrentLyricSourceApp}'");
     }
 
     private void UpdateLyricLines(string current, string next, double lineProgress)
@@ -720,10 +784,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _lastCoverTrackId = trackId;
 
         var sourceApp = snapshot.Track?.SourceApp ?? string.Empty;
-        _currentCoverFallbackText = sourceApp.StartsWith("Q", StringComparison.OrdinalIgnoreCase) ? "Q" : "N";
-        var fallbackColor = sourceApp.StartsWith("Q", StringComparison.OrdinalIgnoreCase)
-            ? Media.Color.FromRgb(41, 182, 246)
-            : Media.Color.FromRgb(67, 160, 71);
+        (_currentCoverFallbackText, var fallbackColor) = GetCoverFallback(sourceApp);
         _currentCoverFallbackColorCss = ToCssColor(fallbackColor);
 
         if (snapshot.CoverImageBytes is { Length: > 0 } bytes)
@@ -735,6 +796,31 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         _currentCoverDataUri = null;
         PushCoverToWebView();
+    }
+
+    private static (string Text, Media.Color Color) GetCoverFallback(string sourceApp)
+    {
+        if (sourceApp.Equals("QQMusic", StringComparison.OrdinalIgnoreCase))
+        {
+            return ("Q", Media.Color.FromRgb(41, 182, 246));
+        }
+
+        if (sourceApp.Equals("Spotify", StringComparison.OrdinalIgnoreCase))
+        {
+            return ("S", Media.Color.FromRgb(30, 215, 96));
+        }
+
+        if (sourceApp.Equals("Netease", StringComparison.OrdinalIgnoreCase))
+        {
+            return ("N", Media.Color.FromRgb(229, 57, 53));
+        }
+
+        if (sourceApp.Equals("Kugou", StringComparison.OrdinalIgnoreCase))
+        {
+            return ("K", Media.Color.FromRgb(52, 152, 219));
+        }
+
+        return ("♫", Media.Color.FromRgb(99, 102, 241));
     }
 
     private async Task EnsureLyricsWebViewReadyAsync()
@@ -913,7 +999,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             fontSize = Math.Clamp(settings.FontSize, 10, 40),
             fontWeight = settings.FontWeight,
             primaryColor = ToCssColor(_primaryTextColor),
-            secondaryColor = ToCssColor(_secondaryTextColor)
+            secondaryColor = ToCssColor(_secondaryTextColor),
+            surfaceColor = settings.ShowBackground
+                ? $"rgba(18, 18, 24, {Math.Clamp(settings.BackgroundOpacity, 0, 1).ToString("0.####", CultureInfo.InvariantCulture)})"
+                : "transparent",
+            surfaceShadow = settings.ShowBorder
+                ? "inset 0 0 0 1px rgba(255, 255, 255, 0.16)"
+                : "none"
         };
 
         var payloadJson = JsonSerializer.Serialize(stylePayload);
@@ -1083,6 +1175,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
       --next-size: 12px;
       --primary-offset-y: 1px;
       --secondary-offset-y: 2px;
+      --surface-color: transparent;
+      --surface-shadow: none;
     }
 
     * {
@@ -1109,9 +1203,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
       height: 100%;
       padding: 0px 0px 0px 0px;
       overflow: hidden;
-      background: transparent;
+      background: var(--surface-color);
       border: 0;
-      border-radius: 0;
+      border-radius: 8px;
+      box-shadow: var(--surface-shadow);
     }
 
     .shell {
@@ -1150,6 +1245,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
       height: 100%;
       object-fit: cover;
       display: none;
+      opacity: 0;
+      transition: opacity 180ms ease-out;
     }
 
     .lyrics-pane {
@@ -1257,8 +1354,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
       <div class="lyrics-pane">
         <div id="viewport" class="viewport">
           <div id="track" class="track">
-            <div id="currentLine" class="line current-line"><span id="currentLineText" class="line-text">TaskbarLyrics started</span></div>
-            <div id="nextLine" class="line next-line"><span id="nextLineText" class="line-text">Waiting for lyrics...</span></div>
+            <div id="currentLine" class="line current-line"><span id="currentLineText" class="line-text">TaskbarLyrics 已启动</span></div>
+            <div id="nextLine" class="line next-line"><span id="nextLineText" class="line-text">等待歌词...</span></div>
             <div id="incomingLine" class="line next-line incoming-line"><span id="incomingLineText" class="line-text"> </span></div>
           </div>
         </div>
@@ -1299,6 +1396,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     let lastLineProgress = Number.NaN;
     let lastCurrentLineIndex = -1;
     let lastTrackId = "";
+    let metricsUpdatePending = false;
     const transitionDurationMs = 560;
 
     function normalizeWeight(weight) {
@@ -1338,7 +1436,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     function setCurrentLine(line) {
-      const safe = toDisplayLine(line, "Searching for lyrics...");
+      const safe = toDisplayLine(line, "正在匹配歌词...");
       if (currentLineTextEl) {
         currentLineTextEl.textContent = safe;
       }
@@ -1461,9 +1559,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
       if (hasLineIndex) {
         if (!Number.isInteger(lastCurrentLineIndex) || lastCurrentLineIndex < 0) {
-          // If we were in a non-lyric state (e.g. "Searching for lyrics..."), 
+          // If we were in a non-lyric state (e.g. "正在匹配歌词..."),
           // use a transition to slide into the first line smoothly.
-          if (displayedCurrent === "Searching for lyrics...") {
+          if (displayedCurrent === "正在匹配歌词...") {
             startTransition(safeCurrent, safeNext, p, currentLineIndex);
           } else {
             setCurrentLine(safeCurrent);
@@ -1510,6 +1608,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     function updateMetrics() {
+      if (isTransitioning) {
+        metricsUpdatePending = true;
+        return;
+      }
+
+      metricsUpdatePending = false;
       // WPF host extends the WebView 2px downward for descender safety; exclude that buffer from row metrics.
       const viewportDescenderBufferPx = 2;
       const measuredViewportHeight = viewportEl.clientHeight || 30;
@@ -1555,6 +1659,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
       if (Number.isInteger(promotedLineIndex) && promotedLineIndex >= 0) {
         lastCurrentLineIndex = promotedLineIndex;
       }
+      if (metricsUpdatePending) {
+        updateMetrics();
+      }
 
       if (queuedFrame) {
         const frame = queuedFrame;
@@ -1570,7 +1677,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
       }
 
       isTransitioning = true;
-      const promoted = toDisplayLine(newCurrent, "Searching for lyrics...");
+      const promoted = toDisplayLine(newCurrent, "正在匹配歌词...");
       const upcoming = toDisplayLine(newNext, " ");
       transitionBaseNextOpacity = secondaryOpacity;
       transitionBaseNextFontSize = Number.parseFloat(window.getComputedStyle(nextLineEl).fontSize || "12");
@@ -1637,7 +1744,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     window.taskbarLyrics = {
       setLyrics(current, next, progress, currentLineIndex, trackId) {
-        const safeCurrent = toDisplayLine(current, "Searching for lyrics...");
+        const safeCurrent = toDisplayLine(current, "正在匹配歌词...");
         const safeNext = toDisplayLine(next, " ");
         const p = clamp01(progress);
         const lineIndex = Number(currentLineIndex);
@@ -1667,14 +1774,30 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (coverImageEl) {
           if (uri.length > 0) {
+            coverImageEl.style.opacity = "0";
+            coverImageEl.onload = () => {
+              coverImageEl.style.display = "block";
+              window.requestAnimationFrame(() => {
+                coverImageEl.style.opacity = "1";
+              });
+              if (coverFallbackEl) {
+                coverFallbackEl.style.display = "none";
+              }
+            };
+            coverImageEl.onerror = () => {
+              coverImageEl.style.display = "none";
+              coverImageEl.style.opacity = "0";
+              if (coverFallbackEl) {
+                coverFallbackEl.style.display = "flex";
+              }
+            };
             coverImageEl.src = uri;
-            coverImageEl.style.display = "block";
-            if (coverFallbackEl) {
-              coverFallbackEl.style.display = "none";
-            }
           } else {
+            coverImageEl.onload = null;
+            coverImageEl.onerror = null;
             coverImageEl.removeAttribute("src");
             coverImageEl.style.display = "none";
+            coverImageEl.style.opacity = "0";
             if (coverFallbackEl) {
               coverFallbackEl.style.display = "flex";
             }
@@ -1699,6 +1822,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (payload.secondaryColor && CSS.supports("color", payload.secondaryColor)) {
           root.style.setProperty("--secondary", payload.secondaryColor);
+        }
+
+        if (payload.surfaceColor && CSS.supports("background-color", payload.surfaceColor)) {
+          root.style.setProperty("--surface-color", payload.surfaceColor);
+        }
+
+        if (payload.surfaceShadow && CSS.supports("box-shadow", payload.surfaceShadow)) {
+          root.style.setProperty("--surface-shadow", payload.surfaceShadow);
         }
       }
     };

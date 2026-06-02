@@ -19,12 +19,18 @@
         <StackPanel Margin="16,12,16,16">
             <GroupBox Header="识别顺序" Margin="0,0,0,10">
                 <StackPanel Margin="12,10,12,8">
-                    <TextBlock Text="已支持：QQ音乐、网易云音乐、Spotify"
+                    <TextBlock Text="已支持：QQ音乐、网易云音乐、酷狗音乐、Spotify"
                                Margin="0,0,0,6" />
                     <TextBlock Text="拖拽列表可调整优先级。多个播放器同时播放时，按从上到下顺序优先识别。"
                                Foreground="#AAFFFFFF"
                                TextWrapping="Wrap"
                                Margin="0,0,0,8" />
+                    <WrapPanel Margin="0,0,0,8">
+                        <CheckBox x:Name="QQMusicCheckBox" Content="QQ音乐" Margin="0,0,14,0" />
+                        <CheckBox x:Name="NeteaseCheckBox" Content="网易云音乐" Margin="0,0,14,0" />
+                        <CheckBox x:Name="KugouCheckBox" Content="酷狗音乐" Margin="0,0,14,0" />
+                        <CheckBox x:Name="SpotifyCheckBox" Content="Spotify" />
+                    </WrapPanel>
                     <Border BorderThickness="1"
                             BorderBrush="#33FFFFFF"
                             CornerRadius="6"
@@ -68,9 +74,6 @@
 
             <GroupBox Header="歌词与调试" Margin="0,0,0,10">
                 <StackPanel Margin="12,10,12,8">
-                    <CheckBox x:Name="LyricMismatchResolverCheckBox"
-                              Content="启用歌词错配修正（预留）"
-                              Margin="0,0,0,6" />
                     <CheckBox x:Name="SmtcTimelineMonitorCheckBox"
                               Content="显示 SMTC 时间轴监视器（调试）"
                               Margin="0,0,0,8" />

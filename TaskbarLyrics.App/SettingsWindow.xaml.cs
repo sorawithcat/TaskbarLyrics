@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
@@ -6,8 +6,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using TaskbarLyrics.Adapters.Netease;
-using TaskbarLyrics.Adapters.QQMusic;
 using TaskbarLyrics.Core.Services;
 
 namespace TaskbarLyrics.App;
@@ -30,10 +28,13 @@ public partial class SettingsWindow : Window
     private void LoadFromSettings()
     {
         LoadRecognitionOrder(_settings.SourceRecognitionOrder);
+        QQMusicCheckBox.IsChecked = _settings.EnableQQMusic;
+        NeteaseCheckBox.IsChecked = _settings.EnableNetease;
+        KugouCheckBox.IsChecked = _settings.EnableKugou;
+        SpotifyCheckBox.IsChecked = _settings.EnableSpotify;
         StartupCheckBox.IsChecked = _settings.ShowLyricsOnStartup;
         BackgroundCheckBox.IsChecked = _settings.ShowBackground;
         BorderCheckBox.IsChecked = _settings.ShowBorder;
-        LyricMismatchResolverCheckBox.IsChecked = _settings.EnableLyricMismatchResolver;
         SmtcTimelineMonitorCheckBox.IsChecked = _settings.EnableSmtcTimelineMonitor;
 
         FontSizeTextBox.Text = _settings.FontSize.ToString(CultureInfo.InvariantCulture);
@@ -65,10 +66,13 @@ public partial class SettingsWindow : Window
     private void SaveButton_Click(object sender, RoutedEventArgs e)
     {
         _settings.SourceRecognitionOrder = _recognitionOrderItems.Select(x => x.SourceKey).ToList();
+        _settings.EnableQQMusic = QQMusicCheckBox.IsChecked == true;
+        _settings.EnableNetease = NeteaseCheckBox.IsChecked == true;
+        _settings.EnableKugou = KugouCheckBox.IsChecked == true;
+        _settings.EnableSpotify = SpotifyCheckBox.IsChecked == true;
         _settings.ShowLyricsOnStartup = StartupCheckBox.IsChecked == true;
         _settings.ShowBackground = BackgroundCheckBox.IsChecked == true;
         _settings.ShowBorder = BorderCheckBox.IsChecked == true;
-        _settings.EnableLyricMismatchResolver = LyricMismatchResolverCheckBox.IsChecked == true;
         _settings.EnableSmtcTimelineMonitor = SmtcTimelineMonitorCheckBox.IsChecked == true;
 
         _settings.FontSize = ParseDouble(FontSizeTextBox, 14, 10, 40);
@@ -89,7 +93,7 @@ public partial class SettingsWindow : Window
             : ForegroundColorTextBox.Text.Trim();
 
         _settings.BackgroundOpacity = ParseDouble(BackgroundOpacityTextBox, 0.55, 0, 1);
-        _settings.WindowWidth = ParseDouble(WindowWidthTextBox, 420, 260, 1200);
+        _settings.WindowWidth = ParseDouble(WindowWidthTextBox, 420, 320, 1400);
         _settings.XOffset = ParseDouble(XOffsetTextBox, 0, -2000, 2000);
         _settings.YOffset = ParseDouble(YOffsetTextBox, 0, -2000, 2000);
 
@@ -126,8 +130,7 @@ public partial class SettingsWindow : Window
             return;
         }
 
-        QQMusicLyricProvider.ClearCache();
-        NeteaseLyricProvider.ClearCache();
+        LyricProviderBase.ClearCache();
         LrcLibLyricProvider.ClearCache();
         GenericSmtcLyricProvider.ClearCache();
 
@@ -201,7 +204,7 @@ public partial class SettingsWindow : Window
 
     private static List<string> NormalizeRecognitionOrder(IReadOnlyList<string>? configuredOrder)
     {
-        var defaults = new[] { "QQMusic", "Netease", "Spotify" };
+        var defaults = new[] { "QQMusic", "Netease", "Kugou", "Spotify" };
         var result = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -236,7 +239,7 @@ public partial class SettingsWindow : Window
         }
 
         var trimmed = source.Trim();
-        if (trimmed.Contains("qq", StringComparison.OrdinalIgnoreCase))
+        if (trimmed.Contains("qqmusic", StringComparison.OrdinalIgnoreCase))
         {
             return "QQMusic";
         }
@@ -245,6 +248,11 @@ public partial class SettingsWindow : Window
             trimmed.Contains("cloudmusic", StringComparison.OrdinalIgnoreCase))
         {
             return "Netease";
+        }
+
+        if (trimmed.Contains("kugou", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Kugou";
         }
 
         if (trimmed.Contains("spotify", StringComparison.OrdinalIgnoreCase))
@@ -261,6 +269,7 @@ public partial class SettingsWindow : Window
         {
             "QQMusic" => "QQ音乐",
             "Netease" => "网易云音乐",
+            "Kugou" => "酷狗音乐",
             "Spotify" => "Spotify",
             _ => source
         };

@@ -4,12 +4,13 @@ using TaskbarLyrics.Core.Utilities;
 
 namespace TaskbarLyrics.Core.Services;
 
-public sealed class LyricSyncService
+public sealed class LyricSyncService : IDisposable
 {
     private static readonly TimeSpan PlayerCompDefault = TimeSpan.Zero;
     private static readonly TimeSpan PlayerCompSpotify = TimeSpan.FromMilliseconds(150);
     private static readonly TimeSpan PlayerCompNetease = TimeSpan.FromMilliseconds(50);
     private static readonly TimeSpan PlayerCompQqMusic = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan PlayerCompKugou = TimeSpan.FromMilliseconds(100);
 
     private readonly ILyricProviderRegistry _registry;
     private TrackInfo? _currentTrack;
@@ -17,6 +18,8 @@ public sealed class LyricSyncService
     private LyricDocument? _currentDocument;
     private string? _currentLyricSourceApp;
     private bool _isUpdating;
+    private CancellationTokenSource? _searchCts;
+    private bool _isDisposed;
 
     public string? CurrentLyricSourceApp => _currentLyricSourceApp;
 
@@ -29,33 +32,35 @@ public sealed class LyricSyncService
     {
         if (snapshot.Track == null)
         {
+            CancelPendingSearch();
             _currentTrack = null;
             _currentTrackId = null;
             _currentDocument = null;
+            _currentLyricSourceApp = null;
             return Task.FromResult(new LyricDisplayFrame("", "", "", 0, -1));
         }
 
-        var trackId = $"{snapshot.Track.Title}|{snapshot.Track.Artist}";
+        var trackId = BuildTrackIdentity(snapshot.Track);
         if (trackId != _currentTrackId)
         {
             _currentTrack = snapshot.Track;
             _currentTrackId = trackId;
             _currentDocument = null;
             _currentLyricSourceApp = null;
-            UpdateLyricsAsync(snapshot.Track);
+            _ = UpdateLyricsAsync(snapshot.Track, trackId);
         }
 
         if (_currentDocument == null || _currentDocument.Lines.Count == 0)
         {
             return Task.FromResult(new LyricDisplayFrame(
-                _isUpdating ? "Searching for lyrics..." : "",
+                _isUpdating ? "正在匹配歌词..." : "暂未找到歌词",
                 "",
                 _currentTrack?.Title ?? "",
                 0, -1));
         }
 
         // Apply player-specific compensation
-        var sourceLead = GetSourceLeadTime(_currentLyricSourceApp);
+        var sourceLead = GetPlayerLeadTime(_currentTrack?.SourceApp);
         var position = snapshot.Position + sourceLead;
 
         var lines = _currentDocument.Lines;
@@ -110,7 +115,10 @@ public sealed class LyricSyncService
         {
             var duration = nextLine.Timestamp - currentLine.Timestamp;
             var elapsed = position - currentLine.Timestamp;
-            progress = Math.Clamp(elapsed.TotalMilliseconds / duration.TotalMilliseconds, 0, 1);
+            if (duration > TimeSpan.Zero)
+            {
+                progress = Math.Clamp(elapsed.TotalMilliseconds / duration.TotalMilliseconds, 0, 1);
+            }
         }
 
         return Task.FromResult(new LyricDisplayFrame(
@@ -122,15 +130,20 @@ public sealed class LyricSyncService
         ));
     }
 
-    private async void UpdateLyricsAsync(TrackInfo track)
+    private async Task UpdateLyricsAsync(TrackInfo track, string trackId)
     {
-        if (_isUpdating) return;
+        // Cancel any ongoing search for the previous track immediately
+        CancelPendingSearch();
+        _searchCts = new CancellationTokenSource();
+        var cts = _searchCts;
+
         _isUpdating = true;
 
         try
         {
-            var results = await _registry.ResolveLyricsAsync(track);
-            
+            var results = await _registry.ResolveLyricsAsync(track, cts.Token);
+
+            if (cts.IsCancellationRequested) return;
             // Pick the best match
             var bestResult = results
                 .Where(r => r.Document != null && r.Document.Lines.Count > 0)
@@ -138,19 +151,53 @@ public sealed class LyricSyncService
                 .ThenBy(r => r.SourceApp == "QQMusic" || r.SourceApp == "Netease" ? 0 : 1) 
                 .FirstOrDefault();
 
-            if (bestResult != null && _currentTrackId == $"{track.Title}|{track.Artist}")
+            if (bestResult != null && _currentTrackId == trackId)
             {
                 _currentDocument = bestResult.Document;
                 _currentLyricSourceApp = bestResult.SourceApp;
             }
         }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            // A newer track replaced this request.
+        }
         finally
         {
-            _isUpdating = false;
+            if (ReferenceEquals(_searchCts, cts))
+            {
+                _searchCts = null;
+                _isUpdating = false;
+            }
+
+            cts.Dispose();
         }
     }
 
-    private TimeSpan GetSourceLeadTime(string? sourceApp)
+    private static string BuildTrackIdentity(TrackInfo track)
+    {
+        return $"{track.Id}|{track.SourceApp}|{track.Title}|{track.Artist}|{track.SongId}|{track.Duration.TotalMilliseconds:F0}";
+    }
+
+    private void CancelPendingSearch()
+    {
+        var cts = _searchCts;
+        _searchCts = null;
+        _isUpdating = false;
+        cts?.Cancel();
+    }
+
+    public void Dispose()
+    {
+        if (_isDisposed)
+        {
+            return;
+        }
+
+        _isDisposed = true;
+        CancelPendingSearch();
+    }
+
+    private static TimeSpan GetPlayerLeadTime(string? sourceApp)
     {
         if (string.IsNullOrEmpty(sourceApp)) return PlayerCompDefault;
 
@@ -159,6 +206,7 @@ public sealed class LyricSyncService
             "spotify" => PlayerCompSpotify,
             "neteasemusic" or "netease" => PlayerCompNetease,
             "qqmusic" => PlayerCompQqMusic,
+            "kugou" => PlayerCompKugou,
             _ => PlayerCompDefault
         };
     }
