@@ -58,6 +58,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _isWebDocumentReady;
     private bool _isShowingWebErrorPage;
     private bool _isTimerTickRunning;
+    private bool _isSuspendedForSettings;
     private int _lastWebCurrentLineIndex = -1;
     private string _lastWebTrackId = string.Empty;
     private FrameworkElement? _lyricsWebViewElement;
@@ -262,9 +263,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         if (IsVisible)
         {
+            if (!_timer.IsEnabled)
+            {
+                _timer.Start();
+            }
+
             AnchorToTaskbar();
             AttachToTaskbarHost();
             ResetLineTransforms();
+        }
+        else if (_isSuspendedForSettings && _timer.IsEnabled)
+        {
+            _timer.Stop();
         }
     }
 
@@ -1193,7 +1203,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     .layout {
       width: 100%;
       height: 100%;
-      padding: 0px 0px 0px 0px;
+      padding: 0 4px;
       overflow: hidden;
       background: var(--surface-color);
       border: 0;
@@ -1238,14 +1248,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
       object-fit: cover;
       display: none;
       opacity: 0;
-      transition: opacity 180ms ease-out;
+      transform: scale(1.035);
+      transition:
+        opacity 420ms cubic-bezier(0.2, 0.9, 0.1, 1),
+        transform 420ms cubic-bezier(0.2, 0.9, 0.1, 1);
     }
 
     .lyrics-pane {
       min-width: 0;
       height: 100%;
       overflow: hidden;
-      padding: 3px 0 0 5px;
+      padding: 3px 4px 0 2px;
     }
 
     .viewport {
@@ -1283,7 +1296,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
       display: flex;
       align-items: center;
       line-height: 1.12;
-      letter-spacing: 0.06px;
+      letter-spacing: 0;
       transform-origin: left center;
       text-shadow: 0 1px 2px rgba(0, 0, 0, 0.36);
       overflow: visible;
@@ -1613,8 +1626,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
       rowHeightPx = Math.max(13, Math.floor(hostHeight / 2));
       rowGapPx = Math.max(0, hostHeight - (rowHeightPx * 2));
       linePitchPx = rowHeightPx + rowGapPx;
-      const currentSizeMax = Math.max(11.2, rowHeightPx * 0.88);
-      const currentSize = Math.min(requestedFontSize, currentSizeMax);
+      const currentSizeMax = Math.max(11.2, rowHeightPx * 0.92);
+      currentSize = Math.min(requestedFontSize, currentSizeMax);
       const nextSize = Math.max(9, currentSize * 0.92);
       root.style.setProperty("--row-height", `${rowHeightPx}px`);
       root.style.setProperty("--row-gap", `${rowGapPx}px`);
@@ -1767,10 +1780,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (coverImageEl) {
           if (uri.length > 0) {
             coverImageEl.style.opacity = "0";
+            coverImageEl.style.transform = "scale(1.035)";
             coverImageEl.onload = () => {
               coverImageEl.style.display = "block";
               window.requestAnimationFrame(() => {
                 coverImageEl.style.opacity = "1";
+                coverImageEl.style.transform = "scale(1)";
               });
               if (coverFallbackEl) {
                 coverFallbackEl.style.display = "none";
@@ -1779,6 +1794,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             coverImageEl.onerror = () => {
               coverImageEl.style.display = "none";
               coverImageEl.style.opacity = "0";
+              coverImageEl.style.transform = "scale(1.035)";
               if (coverFallbackEl) {
                 coverFallbackEl.style.display = "flex";
               }
@@ -1790,6 +1806,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             coverImageEl.removeAttribute("src");
             coverImageEl.style.display = "none";
             coverImageEl.style.opacity = "0";
+            coverImageEl.style.transform = "scale(1.035)";
             if (coverFallbackEl) {
               coverFallbackEl.style.display = "flex";
             }
@@ -1946,7 +1963,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        if (app.IsExiting || !app.UserWantsLyricsVisible)
+        if (_isSuspendedForSettings || app.IsExiting || !app.UserWantsLyricsVisible)
         {
             return;
         }
@@ -1958,6 +1975,46 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         AnchorToTaskbar();
         AttachToTaskbarHost();
+    }
+
+    public void SuspendForSettings()
+    {
+        if (_isSuspendedForSettings)
+        {
+            return;
+        }
+
+        _isSuspendedForSettings = true;
+        _timer.Stop();
+        Media.CompositionTarget.Rendering -= OnCompositionRendering;
+        ResetLineTransforms();
+
+        if (IsVisible)
+        {
+            Hide();
+        }
+    }
+
+    public void ResumeAfterSettings()
+    {
+        if (!_isSuspendedForSettings)
+        {
+            return;
+        }
+
+        _isSuspendedForSettings = false;
+
+        if (System.Windows.Application.Current is App app && app.UserWantsLyricsVisible && !app.IsExiting)
+        {
+            Show();
+            AnchorToTaskbar();
+            AttachToTaskbarHost();
+
+            if (!_timer.IsEnabled)
+            {
+                _timer.Start();
+            }
+        }
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)

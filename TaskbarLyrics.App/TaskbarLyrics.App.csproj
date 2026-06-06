@@ -25,7 +25,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Resource Include="Assets\PlayerIcons\*.png" />
+    <Content Include="Assets\PlayerIcons\*.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

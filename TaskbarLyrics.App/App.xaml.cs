@@ -9,6 +9,7 @@ public partial class App : System.Windows.Application
     private TrayService? _trayService;
     private SettingsWindow? _settingsWindow;
     private MainWindow? _mainWindow;
+    private bool _lyricsSuspendedForSettings;
 
     public AppSettings Settings { get; private set; } = new();
 
@@ -96,8 +97,30 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        if (_mainWindow is { IsVisible: true })
+        {
+            _mainWindow.SuspendForSettings();
+            _lyricsSuspendedForSettings = true;
+        }
+
         _settingsWindow = new SettingsWindow(Settings.Clone());
+        _settingsWindow.Closed += SettingsWindow_Closed;
         _settingsWindow.Show();
+    }
+
+    private void SettingsWindow_Closed(object? sender, EventArgs e)
+    {
+        if (_settingsWindow is not null)
+        {
+            _settingsWindow.Closed -= SettingsWindow_Closed;
+            _settingsWindow = null;
+        }
+
+        if (_lyricsSuspendedForSettings)
+        {
+            _mainWindow?.ResumeAfterSettings();
+            _lyricsSuspendedForSettings = false;
+        }
     }
 
     private void ExitApplication()

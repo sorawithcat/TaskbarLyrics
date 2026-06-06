@@ -5,6 +5,13 @@ const sourceNames = {
   Spotify: "Spotify"
 };
 
+const sourceIcons = {
+  QQMusic: "../../Assets/PlayerIcons/QQ音乐.png",
+  Netease: "../../Assets/PlayerIcons/网易云音乐.png",
+  Kugou: "../../Assets/PlayerIcons/酷狗音乐.png",
+  Spotify: "../../Assets/PlayerIcons/spotify.png"
+};
+
 let state = null;
 let fonts = [];
 let draggedSource = null;
@@ -19,7 +26,18 @@ function updateSetting(key, value) {
   if (!state) return;
   state[key] = value;
   if (key === "foregroundColor") updateSwatch(value);
+  animateSettingFeedback(key);
   bridge.post({ type: "update", key, value });
+}
+
+function animateSettingFeedback(key) {
+  const control = document.querySelector(`[data-key="${key}"]`);
+  const row = control?.closest(".player, .row, .form-row");
+  if (!row) return;
+
+  row.classList.remove("setting-updated");
+  row.offsetWidth;
+  row.classList.add("setting-updated");
 }
 
 function setState(nextState, fontList = fonts) {
@@ -87,7 +105,7 @@ function renderOrder() {
     item.className = "order-item";
     item.draggable = true;
     item.dataset.source = source;
-    item.innerHTML = `<span class="handle">⋮⋮</span><strong>${sourceNames[source] ?? source}</strong>`;
+    item.innerHTML = `<span class="handle">⋮⋮</span><img class="order-icon" src="${sourceIcons[source] ?? ""}" alt=""><strong>${sourceNames[source] ?? source}</strong>`;
     item.addEventListener("dragstart", onOrderDragStart);
     item.addEventListener("dragover", onOrderDragOver);
     item.addEventListener("drop", onOrderDrop);
@@ -167,6 +185,10 @@ function setupEvents() {
       const next = clamp(current + direction * step, min, max);
       input.value = formatNumber(next, decimals);
       updateSetting(key, Number(input.value));
+      input.animate(
+        [{ transform: "scale(1)" }, { transform: "scale(1.035)" }, { transform: "scale(1)" }],
+        { duration: 150, easing: "ease-out" }
+      );
     });
   });
 
@@ -184,14 +206,29 @@ function setupEvents() {
   });
 
   document.getElementById("sidebarToggle")?.addEventListener("click", () => {
-    document.querySelector(".window")?.classList.toggle("collapsed");
+    const windowElement = document.querySelector(".window");
+    const toggle = document.getElementById("sidebarToggle");
+    windowElement?.classList.toggle("collapsed");
+    toggle?.animate(
+      [{ transform: "scale(1)" }, { transform: "scale(.92)" }, { transform: "scale(1)" }],
+      { duration: 170, easing: "ease-out" }
+    );
   });
 
   document.querySelectorAll(".nav-item").forEach((button) => {
     button.addEventListener("click", () => {
       document.querySelectorAll(".nav-item").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
-      document.getElementById(button.dataset.target)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      const target = document.getElementById(button.dataset.target);
+      target?.scrollIntoView({ behavior: "smooth", block: "start" });
+      target?.animate(
+        [
+          { transform: "translateY(0)", borderColor: "rgba(120, 160, 255, .13)" },
+          { transform: "translateY(-2px)", borderColor: "rgba(107, 145, 255, .42)" },
+          { transform: "translateY(0)", borderColor: "rgba(120, 160, 255, .13)" }
+        ],
+        { duration: 280, easing: "ease-out" }
+      );
     });
   });
 

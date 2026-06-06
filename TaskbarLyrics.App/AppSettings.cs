@@ -33,7 +33,7 @@ public sealed class AppSettings
 
     public string FontFamily { get; set; } = "SF Pro Display, SF Pro Text, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, Microsoft YaHei";
 
-    public string FontWeight { get; set; } = "SemiBold";
+    public string FontWeight { get; set; } = "Medium";
 
     public string ForegroundColor { get; set; } = "#FFFFFFFF";
 
