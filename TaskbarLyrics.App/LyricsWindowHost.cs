@@ -55,18 +55,6 @@ internal sealed class LyricsWindowHost : IDisposable
         InvokeAsync(() => _window?.ApplySettings(snapshot));
     }
 
-    public void SuspendForSettings() => InvokeAsync(() =>
-    {
-        _window?.SuspendForSettings();
-        _isVisible = false;
-    });
-
-    public void ResumeAfterSettings() => InvokeAsync(() =>
-    {
-        _window?.ResumeAfterSettings();
-        _isVisible = _window?.IsVisible == true;
-    });
-
     public void Close()
     {
         if (_disposed)

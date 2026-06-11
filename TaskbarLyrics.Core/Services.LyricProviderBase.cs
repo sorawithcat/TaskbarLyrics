@@ -27,9 +27,10 @@ public abstract class LyricProviderBase : ILyricProvider
     private static readonly Regex GlobalBracketRegex = new(@"[\[［\(（【][^[\]］\)）】【]*?[\]］\)）】【]", RegexOptions.Compiled);
     private static readonly Regex FeatureSuffixRegex = new(@"\s+(feat\.?|ft\.?|with)\s+.*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex LeadingCreditRegex = new(
-        @"^\s*(?:作词|作詞|填词|填詞|作曲|编曲|編曲|词|詞|曲|原唱|翻唱|制作人|製作人|监制|監製|混音|母带|母帶|录音|錄音|和声|和聲|吉他|贝斯|貝斯|鼓|OP|SP|Composer|Lyricist|Lyrics?|Music|Arranger|Producer|Produced\s+by|Written\s+by|Composed\s+by)\s*[:：]",
+        @"^\s*(?:(?:\u4f5c|\u586b)[\u8bcd\u8a5e]|\u4f5c\u66f2|[\u7f16\u7de8]\u66f2|[\u8bcd\u8a5e]|\u66f2|\u539f\u5531|\u6f14\u5531|\u6b4c\u624b|\u5236\u4f5c\u4eba|[\u76d1\u76e3][\u5236\u88fd]|\u6df7\u97f3|\u6bcd\u5e26|\u51fa\u54c1|[\u5f55\u9304]\u97f3|OP|SP|Composer|Lyricist|Lyrics?|Music|Arranger|Producer|Produced\s+by|Written\s+by|Composed\s+by)\s*[:\uff1a]",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly TimeSpan OpeningDuplicateTimestampWindow = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan OpeningCreditFilterWindow = TimeSpan.FromSeconds(5);
 
     // 缓存系统
     private static readonly ConcurrentDictionary<string, LyricDocument?> MemoryCache = new(StringComparer.OrdinalIgnoreCase);
@@ -87,7 +88,7 @@ public abstract class LyricProviderBase : ILyricProvider
         .Where(l => !string.IsNullOrWhiteSpace(l.Text) && l.Text != "//")
         .ToList();
 
-        lines = NormalizeOpeningDuplicateTimestampGroups(lines);
+        lines = NormalizeOpeningLines(lines);
 
         return new LyricDocument(EnsureSyllables(lines), doc.BestScore);
     }
@@ -213,33 +214,48 @@ public abstract class LyricProviderBase : ILyricProvider
             }
         }
 
-        return AlignBilingualLyrics(NormalizeOpeningDuplicateTimestampGroups(resultList));
+        return AlignBilingualLyrics(NormalizeOpeningLines(resultList));
     }
 
-    private static List<LyricLine> NormalizeOpeningDuplicateTimestampGroups(List<LyricLine> lines)
+    private static List<LyricLine> NormalizeOpeningLines(List<LyricLine> lines)
     {
-        if (lines.Count < 2)
+        if (lines.Count == 0)
         {
             return lines;
         }
 
-        var sorted = lines
+        var sortedLines = lines
             .Select((line, index) => new { Line = line, Index = index })
             .OrderBy(x => x.Line.Timestamp)
             .ThenBy(x => x.Index)
+            .Select(x => x.Line)
             .ToList();
 
-        var normalized = new List<LyricLine>(lines.Count);
-        for (var i = 0; i < sorted.Count;)
+        var filteredLines = sortedLines
+            .Where(line => line.Timestamp > OpeningCreditFilterWindow || !IsLeadingCreditLine(line.Text))
+            .ToList();
+
+        if (filteredLines.Count == 0)
         {
-            var timestamp = sorted[i].Line.Timestamp;
+            filteredLines = sortedLines;
+        }
+
+        if (filteredLines.Count < 2)
+        {
+            return filteredLines;
+        }
+
+        var normalized = new List<LyricLine>(filteredLines.Count);
+        for (var i = 0; i < filteredLines.Count;)
+        {
+            var timestamp = filteredLines[i].Timestamp;
             var group = new List<LyricLine>();
             do
             {
-                group.Add(sorted[i].Line);
+                group.Add(filteredLines[i]);
                 i++;
             }
-            while (i < sorted.Count && sorted[i].Line.Timestamp == timestamp);
+            while (i < filteredLines.Count && filteredLines[i].Timestamp == timestamp);
 
             if (timestamp <= OpeningDuplicateTimestampWindow && group.Count > 1)
             {
@@ -247,13 +263,19 @@ public abstract class LyricProviderBase : ILyricProvider
                     .Where(line => !IsLeadingCreditLine(line.Text))
                     .ToList();
 
-                if (nonCreditLines.Count > 0)
+                if (nonCreditLines.Count == group.Count)
                 {
-                    normalized.Add(nonCreditLines[^1]);
+                    normalized.AddRange(group);
                     continue;
                 }
 
-                normalized.Add(group[0]);
+                if (nonCreditLines.Count > 0)
+                {
+                    normalized.AddRange(nonCreditLines);
+                    continue;
+                }
+
+                normalized.Add(group[^1]);
                 continue;
             }
 
@@ -442,5 +464,5 @@ public abstract class LyricProviderBase : ILyricProvider
         }
     }
 
-    private static string CacheFilePathStatic => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskbarLyrics", "cache", "unified-lyrics-v6.json");
+    private static string CacheFilePathStatic => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskbarLyrics", "cache", "unified-lyrics-v8.json");
 }

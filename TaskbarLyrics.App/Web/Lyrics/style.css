@@ -60,8 +60,19 @@ html, body {
   border-radius: 6px;
   overflow: hidden;
   position: relative;
-  background: #43a047;
+  background: #1f2937;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+  opacity: 1;
+  filter: saturate(1) brightness(1);
+  transition:
+    opacity 520ms cubic-bezier(0.16, 1, 0.3, 1),
+    filter 520ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 420ms ease;
+}
+
+.cover.switching {
+  opacity: 0.72;
+  filter: saturate(0.82) brightness(0.86);
 }
 
 .cover-fallback {
@@ -75,6 +86,12 @@ html, body {
   color: rgba(255, 255, 255, 0.96);
   user-select: none;
   -webkit-user-select: none;
+  opacity: 1;
+  transition: opacity 360ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.cover.switching .cover-fallback {
+  opacity: 0.58;
 }
 
 .cover-image {
@@ -83,10 +100,7 @@ html, body {
   object-fit: cover;
   display: none;
   opacity: 0;
-  transform: scale(1.035);
-  transition:
-    opacity 420ms cubic-bezier(0.2, 0.9, 0.1, 1),
-    transform 420ms cubic-bezier(0.2, 0.9, 0.1, 1);
+  transition: opacity 520ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .lyrics-pane {

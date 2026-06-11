@@ -33,6 +33,16 @@ let lastCurrentLineIndex = -1;
 let lastTrackId = "";
 let metricsUpdatePending = false;
 const transitionDurationMs = 560;
+const trackSwitchSearchMinVisibleMs = 900;
+const coverSwapDelayMs = 180;
+const coverSwitchMinVisibleMs = 420;
+const SEARCHING_TEXT = "\u6b63\u5728\u68c0\u7d22\u6b4c\u8bcd...";
+const LEGACY_SEARCHING_TEXT = "\u6b63\u5728\u5339\u914d\u6b4c\u8bcd...";
+let trackSwitchSearchStartedAt = 0;
+let delayedFrameTimer = 0;
+let coverUpdateTimer = 0;
+let coverStateTimer = 0;
+let coverSwitchStartedAt = 0;
 
 function normalizeWeight(weight) {
   const normalized = String(weight || "").trim().toLowerCase();
@@ -71,7 +81,7 @@ function setTrackOffset(rowCount) {
 }
 
 function setCurrentLine(line) {
-  const safe = toDisplayLine(line, "正在匹配歌词...");
+  const safe = toDisplayLine(line, SEARCHING_TEXT);
   if (currentLineTextEl) {
     currentLineTextEl.textContent = safe;
   }
@@ -134,36 +144,155 @@ function stopTransitionOpacityAnimation() {
   }
 }
 
-function resetForTrackSwitch(safeCurrent, safeNext, progress, currentLineIndex, trackId) {
+function isSearchingLine(line) {
+  return line === SEARCHING_TEXT || line === LEGACY_SEARCHING_TEXT;
+}
+
+function setCoverLoadingState(isLoading) {
+  if (!coverEl) {
+    return;
+  }
+
+  if (coverStateTimer) {
+    window.clearTimeout(coverStateTimer);
+    coverStateTimer = 0;
+  }
+
+  if (isLoading) {
+    coverSwitchStartedAt = window.performance.now();
+    coverEl.classList.add("switching");
+    return;
+  }
+
+  const elapsed = coverSwitchStartedAt > 0
+    ? window.performance.now() - coverSwitchStartedAt
+    : coverSwitchMinVisibleMs;
+  const delay = Math.max(0, coverSwitchMinVisibleMs - elapsed);
+  coverStateTimer = window.setTimeout(() => {
+    coverStateTimer = 0;
+    coverSwitchStartedAt = 0;
+    coverEl.classList.remove("switching");
+  }, delay);
+}
+
+function setCoverImageEntering() {
+  if (!coverImageEl) {
+    return;
+  }
+
+  coverImageEl.style.display = "block";
+  coverImageEl.style.opacity = "0";
+  window.requestAnimationFrame(() => {
+    coverImageEl.style.opacity = "1";
+  });
+}
+
+function clearCoverUpdateTimer() {
+  if (coverUpdateTimer) {
+    window.clearTimeout(coverUpdateTimer);
+    coverUpdateTimer = 0;
+  }
+}
+
+function applyFallbackCover(text, fallbackColor) {
+  if (coverFallbackEl) {
+    coverFallbackEl.textContent = text;
+  }
+
+  if (coverEl && fallbackColor && CSS.supports("color", fallbackColor)) {
+    coverEl.style.backgroundColor = fallbackColor;
+  }
+}
+
+function scheduleFallbackCoverUpdate(text, fallbackColor, onApplied) {
+  clearCoverUpdateTimer();
+  coverUpdateTimer = window.setTimeout(() => {
+    coverUpdateTimer = 0;
+    applyFallbackCover(text, fallbackColor);
+    if (typeof onApplied === "function") {
+      onApplied();
+    }
+  }, coverSwapDelayMs);
+}
+
+function clearDelayedFrameTimer() {
+  if (delayedFrameTimer) {
+    window.clearTimeout(delayedFrameTimer);
+    delayedFrameTimer = 0;
+  }
+}
+
+function shouldHoldAfterSearch(frame) {
+  return trackSwitchSearchStartedAt > 0 &&
+    isSearchingLine(displayedCurrent) &&
+    Number.isInteger(frame.currentLineIndex) &&
+    frame.currentLineIndex >= 0 &&
+    !isSearchingLine(frame.current);
+}
+
+function applyFrameAfterSearchDwell(frame) {
+  clearDelayedFrameTimer();
+  if (!shouldHoldAfterSearch(frame)) {
+    applyFrame(frame.current, frame.next, frame.progress, frame.currentLineIndex);
+    return;
+  }
+
+  const elapsed = window.performance.now() - trackSwitchSearchStartedAt;
+  const delay = Math.max(0, trackSwitchSearchMinVisibleMs - elapsed);
+  delayedFrameTimer = window.setTimeout(() => {
+    delayedFrameTimer = 0;
+    trackSwitchSearchStartedAt = 0;
+    applyFrame(frame.current, frame.next, frame.progress, frame.currentLineIndex);
+  }, delay);
+}
+
+function cancelActiveTransition() {
   transitionGeneration++;
-  stopTransitionOpacityAnimation();
   if (transitionFallbackTimer) {
     window.clearTimeout(transitionFallbackTimer);
     transitionFallbackTimer = 0;
   }
-  queuedFrame = null;
+  clearDelayedFrameTimer();
+  stopTransitionOpacityAnimation();
   isTransitioning = false;
-
+  queuedFrame = null;
   trackEl.classList.add("no-anim");
   trackEl.classList.remove("animating");
   currentLineEl.classList.remove("leaving");
   nextLineEl.classList.remove("promoting");
   setTrackOffset(0);
-  setCurrentLine(safeCurrent);
-  setSecondaryLine(safeNext);
-  setIncomingLine("");
   currentLineEl.style.opacity = "";
   nextLineEl.style.opacity = "";
   nextLineEl.style.fontSize = "";
-  incomingLineEl.style.opacity = "";
-  updateSecondaryOpacity(progress);
+  incomingLineEl.style.opacity = secondaryOpacity.toFixed(3);
   void trackEl.offsetHeight;
   trackEl.classList.remove("no-anim");
-
-  lastLineProgress = clamp01(progress);
-  lastCurrentLineIndex = Number.isInteger(currentLineIndex) ? currentLineIndex : -1;
-  lastTrackId = trackId;
 }
+
+function resetForTrackSwitch(safeCurrent, safeNext, progress, currentLineIndex, trackId) {
+  cancelActiveTransition();
+  lastTrackId = trackId;
+  lastCurrentLineIndex = -1;
+  lastLineProgress = 0;
+  trackSwitchSearchStartedAt = window.performance.now();
+  setCoverLoadingState(true);
+
+  const hasLyricFrame = Number.isInteger(currentLineIndex) && currentLineIndex >= 0 && !isSearchingLine(safeCurrent);
+
+  if (!isSearchingLine(displayedCurrent)) {
+    startTransition(SEARCHING_TEXT, " ", 0, -1);
+    if (hasLyricFrame) {
+      queuedFrame = { current: safeCurrent, next: safeNext, progress, currentLineIndex };
+    }
+  } else {
+    setSecondaryLine(" ");
+    updateSecondaryOpacity(0);
+    if (hasLyricFrame) {
+      applyFrameAfterSearchDwell({ current: safeCurrent, next: safeNext, progress, currentLineIndex });
+    }
+  }
+}
+
 
 function runTransitionOpacityAnimation(now) {
   if (!isTransitioning) {
@@ -190,14 +319,18 @@ function runTransitionOpacityAnimation(now) {
 }
 
 function applyFrame(safeCurrent, safeNext, progress, currentLineIndex) {
+  if (isTransitioning) {
+    queuedFrame = { current: safeCurrent, next: safeNext, progress, currentLineIndex };
+    return;
+  }
+
   const p = clamp01(progress);
   const hasLineIndex = Number.isInteger(currentLineIndex) && currentLineIndex >= 0;
 
   if (hasLineIndex) {
     if (!Number.isInteger(lastCurrentLineIndex) || lastCurrentLineIndex < 0) {
-      // If we were in a non-lyric state (e.g. "正在匹配歌词..."),
-      // use a transition to slide into the first line smoothly.
-      if (displayedCurrent === "正在匹配歌词...") {
+      // If we were in a non-lyric state, slide into the first line smoothly.
+      if (isSearchingLine(displayedCurrent)) {
         startTransition(safeCurrent, safeNext, p, currentLineIndex);
       } else {
         setCurrentLine(safeCurrent);
@@ -305,7 +438,7 @@ function finalizeTransition(promotedCurrent, upcomingNext, progress, promotedLin
   if (queuedFrame) {
     const frame = queuedFrame;
     queuedFrame = null;
-    applyFrame(frame.current, frame.next, frame.progress, frame.currentLineIndex);
+    applyFrameAfterSearchDwell(frame);
   }
 }
 
@@ -317,7 +450,7 @@ function startTransition(newCurrent, newNext, progress, currentLineIndex = -1) {
 
   isTransitioning = true;
   const generation = ++transitionGeneration;
-  const promoted = toDisplayLine(newCurrent, "正在匹配歌词...");
+  const promoted = toDisplayLine(newCurrent, SEARCHING_TEXT);
   const upcoming = toDisplayLine(newNext, " ");
   transitionBaseNextOpacity = secondaryOpacity;
   transitionBaseNextFontSize = Number.parseFloat(window.getComputedStyle(nextLineEl).fontSize || "12");
@@ -400,7 +533,7 @@ if (typeof ResizeObserver !== "undefined") {
 
 window.taskbarLyrics = {
   setLyrics(current, next, progress, currentLineIndex, trackId) {
-    const safeCurrent = toDisplayLine(current, "正在匹配歌词...");
+    const safeCurrent = toDisplayLine(current, SEARCHING_TEXT);
     const safeNext = toDisplayLine(next, " ");
     const p = clamp01(progress);
     const lineIndex = Number(currentLineIndex);
@@ -420,24 +553,14 @@ window.taskbarLyrics = {
   setCover(dataUri, fallbackText, fallbackColor) {
     const uri = (dataUri ?? "").toString().trim();
     const text = toDisplayLine(fallbackText, "N").slice(0, 1).toUpperCase();
-    if (coverFallbackEl) {
-      coverFallbackEl.textContent = text;
-    }
-
-    if (coverEl && fallbackColor && CSS.supports("color", fallbackColor)) {
-      coverEl.style.background = fallbackColor;
-    }
+    setCoverLoadingState(true);
 
     if (coverImageEl) {
       if (uri.length > 0) {
         coverImageEl.style.opacity = "0";
-        coverImageEl.style.transform = "scale(1.035)";
         coverImageEl.onload = () => {
-          coverImageEl.style.display = "block";
-          window.requestAnimationFrame(() => {
-            coverImageEl.style.opacity = "1";
-            coverImageEl.style.transform = "scale(1)";
-          });
+          setCoverImageEntering();
+          setCoverLoadingState(false);
           if (coverFallbackEl) {
             coverFallbackEl.style.display = "none";
           }
@@ -445,23 +568,31 @@ window.taskbarLyrics = {
         coverImageEl.onerror = () => {
           coverImageEl.style.display = "none";
           coverImageEl.style.opacity = "0";
-          coverImageEl.style.transform = "scale(1.035)";
-          if (coverFallbackEl) {
-            coverFallbackEl.style.display = "flex";
-          }
+          scheduleFallbackCoverUpdate(text, fallbackColor, () => {
+            if (coverFallbackEl) {
+              coverFallbackEl.style.display = "flex";
+            }
+            setCoverLoadingState(false);
+          });
         };
-        coverImageEl.src = uri;
+        window.setTimeout(() => {
+          coverImageEl.src = uri;
+        }, coverSwapDelayMs);
       } else {
         coverImageEl.onload = null;
         coverImageEl.onerror = null;
-        coverImageEl.removeAttribute("src");
-        coverImageEl.style.display = "none";
         coverImageEl.style.opacity = "0";
-        coverImageEl.style.transform = "scale(1.035)";
-        if (coverFallbackEl) {
-          coverFallbackEl.style.display = "flex";
-        }
+        scheduleFallbackCoverUpdate(text, fallbackColor, () => {
+          coverImageEl.removeAttribute("src");
+          coverImageEl.style.display = "none";
+          if (coverFallbackEl) {
+            coverFallbackEl.style.display = "flex";
+          }
+          setCoverLoadingState(false);
+        });
       }
+    } else {
+      scheduleFallbackCoverUpdate(text, fallbackColor, () => setCoverLoadingState(false));
     }
   },
 

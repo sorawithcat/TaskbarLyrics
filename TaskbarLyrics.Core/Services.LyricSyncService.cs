@@ -6,14 +6,16 @@ namespace TaskbarLyrics.Core.Services;
 
 public sealed class LyricSyncService : IDisposable
 {
+    public const string SearchingText = "正在检索歌词...";
+    public const string NoLyricsText = "暂未找到歌词";
+    private static readonly TimeSpan StartupLineGuardPositionThreshold = TimeSpan.FromMilliseconds(500);
+
     private readonly ILyricProviderRegistry _registry;
     private readonly Func<string?, bool> _shouldShowTranslation;
     private TrackInfo? _currentTrack;
     private string? _currentTrackId;
     private LyricDocument? _currentDocument;
     private string? _currentLyricSourceApp;
-    private int _lastAcceptedLineIndex = -1;
-    private TimeSpan? _lastAcceptedPosition;
     private bool _isUpdating;
     private CancellationTokenSource? _searchCts;
     private bool _isDisposed;
@@ -37,19 +39,17 @@ public sealed class LyricSyncService : IDisposable
             _currentTrackId = null;
             _currentDocument = null;
             _currentLyricSourceApp = null;
-            ResetLineStabilizer();
             _lastEmittedLineIndex = -1;
             return Task.FromResult(new LyricDisplayFrame("", "", "", 0, -1));
         }
 
-        var trackId = BuildTrackIdentity(snapshot.Track);
+        var trackId = BuildStableTrackIdentity(snapshot.Track);
         if (trackId != _currentTrackId)
         {
             _currentTrack = snapshot.Track;
             _currentTrackId = trackId;
             _currentDocument = null;
             _currentLyricSourceApp = null;
-            ResetLineStabilizer();
             _lastEmittedLineIndex = -1;
             _ = UpdateLyricsAsync(snapshot.Track, trackId);
         }
@@ -57,7 +57,7 @@ public sealed class LyricSyncService : IDisposable
         if (_currentDocument == null || _currentDocument.Lines.Count == 0)
         {
             return Task.FromResult(new LyricDisplayFrame(
-                _isUpdating ? "正在匹配歌词..." : "暂未找到歌词",
+                _isUpdating ? SearchingText : NoLyricsText,
                 "",
                 _currentTrack?.Title ?? "",
                 0, -1));
@@ -68,34 +68,25 @@ public sealed class LyricSyncService : IDisposable
         var position = snapshot.Position + sourceLead;
 
         var lines = _currentDocument.Lines;
-        var currentIdx = -1;
-        for (int i = 0; i < lines.Count; i++)
-        {
-            if (lines[i].Timestamp <= position) currentIdx = i;
-            else break;
-        }
+        var currentIdx = FindCurrentLineIndex(lines, position);
 
         // Grace period: for the first 300ms after lyrics load, SMTC position
         // is often stale or over-extrapolated (residual from the previous track).
         // Force lineIndex to 0 to avoid showing the wrong starting line.
         var msSinceLoad = Environment.TickCount64 - _documentLoadedTicks;
-        if (msSinceLoad < 300 && _lastEmittedLineIndex < 0)
+        if (msSinceLoad < 300 &&
+            _lastEmittedLineIndex < 0 &&
+            position <= StartupLineGuardPositionThreshold)
         {
             currentIdx = currentIdx < 0 ? -1 : 0;
         }
 
-        // Monotonic guard: prevent backward index jumps caused by
-        // SMTC timeline extrapolation oscillation within the same track.
-        if (currentIdx >= 0 && currentIdx < _lastEmittedLineIndex)
-        {
-            currentIdx = _lastEmittedLineIndex;
-        }
         if (currentIdx >= 0)
         {
             _lastEmittedLineIndex = currentIdx;
         }
 
-        var displayIdx = StabilizeLineIndex(position, currentIdx < 0 ? 0 : currentIdx);
+        var displayIdx = currentIdx < 0 ? 0 : currentIdx;
 
         if (displayIdx == 0 && currentIdx == -1)
         {
@@ -182,7 +173,6 @@ public sealed class LyricSyncService : IDisposable
                 _currentDocument = bestResult.Document;
                 _currentLyricSourceApp = bestResult.SourceApp;
                 _documentLoadedTicks = Environment.TickCount64;
-                ResetLineStabilizer();
                 _lastEmittedLineIndex = -1;
             }
         }
@@ -202,7 +192,7 @@ public sealed class LyricSyncService : IDisposable
         }
     }
 
-    private static string BuildTrackIdentity(TrackInfo track)
+    public static string BuildStableTrackIdentity(TrackInfo track)
     {
         // SMTC metadata can arrive in waves: SongId and Duration are often filled
         // or corrected after lyrics have already loaded. They should not reset the
@@ -222,36 +212,26 @@ public sealed class LyricSyncService : IDisposable
         return _shouldShowTranslation(_currentLyricSourceApp);
     }
 
-    private int StabilizeLineIndex(TimeSpan position, int candidateIndex)
+    private static int FindCurrentLineIndex(IReadOnlyList<LyricLine> lines, TimeSpan position)
     {
-        const int jitterBackToleranceMs = 1200;
-
-        var acceptedIndex = candidateIndex;
-        if (_lastAcceptedLineIndex >= 0 &&
-            candidateIndex < _lastAcceptedLineIndex &&
-            _lastAcceptedPosition.HasValue &&
-            position >= _lastAcceptedPosition.Value - TimeSpan.FromMilliseconds(jitterBackToleranceMs))
+        var currentIdx = -1;
+        TimeSpan? currentTimestamp = null;
+        for (var i = 0; i < lines.Count; i++)
         {
-            acceptedIndex = _lastAcceptedLineIndex;
+            var timestamp = lines[i].Timestamp;
+            if (timestamp > position)
+            {
+                break;
+            }
+
+            if (currentTimestamp != timestamp)
+            {
+                currentTimestamp = timestamp;
+                currentIdx = i;
+            }
         }
 
-        _lastAcceptedLineIndex = acceptedIndex;
-        if (!_lastAcceptedPosition.HasValue || position > _lastAcceptedPosition.Value)
-        {
-            _lastAcceptedPosition = position;
-        }
-        else if (acceptedIndex == candidateIndex)
-        {
-            _lastAcceptedPosition = position;
-        }
-
-        return acceptedIndex;
-    }
-
-    private void ResetLineStabilizer()
-    {
-        _lastAcceptedLineIndex = -1;
-        _lastAcceptedPosition = null;
+        return currentIdx;
     }
 
     private void CancelPendingSearch()

@@ -3,7 +3,6 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
@@ -21,32 +20,17 @@ using TaskbarLyrics.Core.Utilities;
 
 namespace TaskbarLyrics.App;
 
-public partial class MainWindow : Window, INotifyPropertyChanged
+public partial class MainWindow : Window
 {
     private const int WmShowWindow = 0x0018;
     private readonly IMusicSessionProvider _musicSessionProvider;
     private readonly DispatcherTimer _timer;
     private readonly uint _taskbarCreatedMessage;
-    private readonly Media.SolidColorBrush _currentLineBrush = new(Media.Colors.White);
-    private readonly Media.SolidColorBrush _nextLineBrush = new(Media.Color.FromArgb(150, 255, 255, 255));
-    private readonly Media.SolidColorBrush _incomingLineBrush = new(Media.Color.FromArgb(150, 255, 255, 255));
     private Media.Color _primaryTextColor = Media.Colors.White;
     private Media.Color _secondaryTextColor = Media.Color.FromArgb(190, 255, 255, 255);
-    private const double SecondaryLineBrightness = 0.40;
-    private readonly TimeSpan _lineTransitionDuration = TimeSpan.FromMilliseconds(360);
-    private readonly Stopwatch _lineTransitionClock = new();
-    private double _lineTransitionTravel;
-    private double _lineTrackHeight = 18;
-    private double _secondaryLineFontSize = 12;
-    private bool _suppressPromotedSizeAnimation;
-    private bool _isLineTransitionAnimating;
     private LyricSyncService _lyricSyncService;
     private string _currentLine = "TaskbarLyrics 已启动";
     private string _nextLine = "等待歌词...";
-    private string _displayCurrentLine = "TaskbarLyrics 已启动";
-    private string _displayNextLine = "等待歌词...";
-    private string? _pendingCurrentLine;
-    private string? _pendingNextLine;
     private string? _lastCoverTrackId;
     private string? _currentCoverDataUri;
     private string _currentCoverFallbackText = "N";
@@ -58,7 +42,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _isWebDocumentReady;
     private bool _isShowingWebErrorPage;
     private bool _isTimerTickRunning;
-    private bool _isSuspendedForSettings;
     private int _lastWebCurrentLineIndex = -1;
     private string _lastWebTrackId = string.Empty;
     private FrameworkElement? _lyricsWebViewElement;
@@ -70,10 +53,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public MainWindow()
     {
         InitializeComponent();
-        DataContext = this;
-        CurrentLineTextBlock.Foreground = _currentLineBrush;
-        NextLineTextBlock.Foreground = _nextLineBrush;
-        IncomingNextLineTextBlock.Foreground = _incomingLineBrush;
 
         _musicSessionProvider = new SmtcMusicSessionProvider();
         _lyricSyncService = BuildLyricSyncService();
@@ -100,38 +79,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    public event PropertyChangedEventHandler? PropertyChanged;
-
-    public string DisplayCurrentLine
-    {
-        get => _displayCurrentLine;
-        private set
-        {
-            if (_displayCurrentLine == value)
-            {
-                return;
-            }
-
-            _displayCurrentLine = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public string DisplayNextLine
-    {
-        get => _displayNextLine;
-        private set
-        {
-            if (_displayNextLine == value)
-            {
-                return;
-            }
-
-            _displayNextLine = value;
-            OnPropertyChanged();
-        }
-    }
-
     public void ApplySettings(AppSettings settings)
     {
         Log.SetVerboseEnabled(settings.EnableSmtcTimelineMonitor);
@@ -144,23 +91,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         Width = Math.Clamp(settings.WindowWidth, 320, 1400);
-        CurrentLineTextBlock.FontSize = Math.Clamp(settings.FontSize, 10, 40);
-        _secondaryLineFontSize = Math.Max(9, Math.Round(CurrentLineTextBlock.FontSize * 0.92, 2));
-        NextLineTextBlock.FontSize = _secondaryLineFontSize;
-        IncomingNextLineTextBlock.FontSize = _secondaryLineFontSize;
-        ApplyStableLineTrackLayout();
-        var fontFamilyText = string.IsNullOrWhiteSpace(settings.FontFamily)
-            ? AppSettings.DefaultFontFamily
-            : settings.FontFamily;
-        var lyricFontFamily = ResolveFontFamily(fontFamilyText);
-        var lyricFontWeight = ResolveFontWeight(settings.FontWeight);
-        CurrentLineTextBlock.FontFamily = lyricFontFamily;
-        NextLineTextBlock.FontFamily = lyricFontFamily;
-        IncomingNextLineTextBlock.FontFamily = lyricFontFamily;
-        CurrentLineTextBlock.FontWeight = lyricFontWeight;
-        NextLineTextBlock.FontWeight = lyricFontWeight;
-        IncomingNextLineTextBlock.FontWeight = lyricFontWeight;
-
         try
         {
             var brush = (Media.Brush?)new Media.BrushConverter().ConvertFromString(settings.ForegroundColor);
@@ -183,8 +113,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _primaryTextColor.R,
             _primaryTextColor.G,
             _primaryTextColor.B);
-        SetLineBrushes(1.0, SecondaryLineBrightness, SecondaryLineBrightness);
-
         // Keep the WPF host transparent; the WebView draws the optional surface.
         RootBorder.Background = Media.Brushes.Transparent;
         RootBorder.BorderBrush = Media.Brushes.Transparent;
@@ -194,7 +122,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _lyricSyncService = BuildLyricSyncService(settings);
         AnchorToTaskbar();
         AttachToTaskbarHost();
-        ResetLineTransforms();
         PushStyleToWebView(settings);
         PushLyricsToWebView(_currentLine, _nextLine, 0, _lastWebCurrentLineIndex, _lastWebTrackId);
         _enableSmtcTimelineMonitor = settings.EnableSmtcTimelineMonitor;
@@ -244,7 +171,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         AnchorToTaskbar();
         AttachToTaskbarHost();
-        ResetLineTransforms();
         await EnsureLyricsWebViewReadyAsync();
         PushLyricsToWebView(_currentLine, _nextLine, 0, _lastWebCurrentLineIndex, _lastWebTrackId);
         UpdateSmtcTimelineMonitorWindow();
@@ -270,7 +196,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             AnchorToTaskbar();
             AttachToTaskbarHost();
-            ResetLineTransforms();
         }
         else if (_timer.IsEnabled)
         {
@@ -307,7 +232,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         DetachWebViewNavigationHandler();
 
-        Media.CompositionTarget.Rendering -= OnCompositionRendering;
         _lyricSyncService.Dispose();
     }
 
@@ -403,7 +327,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             var next = frame.NextLine;
             _lastWebCurrentLineIndex = frame.CurrentLineIndex;
-            _lastWebTrackId = snapshot.Track?.Id ?? string.Empty;
+            _lastWebTrackId = snapshot.Track is null
+                ? string.Empty
+                : LyricSyncService.BuildStableTrackIdentity(snapshot.Track);
 
             UpdateLyricLines(current, next, frame.LineProgress);
             PushLyricsToWebView(current, next, frame.LineProgress, frame.CurrentLineIndex, _lastWebTrackId);
@@ -414,8 +340,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             LogToFile($"EXCEPTION in OnTimerTick: {ex}");
             _currentLine = $"歌词服务异常: {ex.Message}";
             _nextLine = string.Empty;
-            DisplayCurrentLine = _currentLine;
-            DisplayNextLine = _nextLine;
             PushLyricsToWebView(_currentLine, _nextLine, 0, _lastWebCurrentLineIndex, _lastWebTrackId);
             Debug.WriteLine(ex);
         }
@@ -449,331 +373,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         _currentLine = current;
         _nextLine = next;
-        DisplayCurrentLine = current;
-        DisplayNextLine = next;
-        CurrentLineTextBlock.Text = current;
-        NextLineTextBlock.Text = string.IsNullOrWhiteSpace(next) ? " " : next;
-    }
-
-    private void StartLinePromotionTransition()
-    {
-        if (_isLineTransitionAnimating || _pendingCurrentLine is null)
-        {
-            return;
-        }
-
-        _isLineTransitionAnimating = true;
-        if (!string.Equals(DisplayNextLine, _pendingCurrentLine, StringComparison.Ordinal))
-        {
-            DisplayNextLine = _pendingCurrentLine;
-        }
-        IncomingNextLineTextBlock.Text = _pendingNextLine ?? string.Empty;
-        _suppressPromotedSizeAnimation = ShouldSuppressPromotedSizeAnimation(_pendingCurrentLine);
-        NextLineTextBlock.TextTrimming = TextTrimming.None;
-        _lineTransitionTravel = GetLineTravelDistance();
-        _lineTransitionClock.Restart();
-
-        Media.CompositionTarget.Rendering -= OnCompositionRendering;
-        Media.CompositionTarget.Rendering += OnCompositionRendering;
-        ApplyTransitionVisuals(0);
-    }
-
-    private void CompleteLinePromotionTransition()
-    {
-        _isLineTransitionAnimating = false;
-        Media.CompositionTarget.Rendering -= OnCompositionRendering;
-        _lineTransitionClock.Reset();
-
-        if (_pendingCurrentLine is null)
-        {
-            ResetLineTransforms();
-            return;
-        }
-
-        _currentLine = _pendingCurrentLine;
-        _nextLine = _pendingNextLine ?? string.Empty;
-        NextLineTextBlock.FontSize = _secondaryLineFontSize;
-        NextLineTextBlock.TextTrimming = TextTrimming.CharacterEllipsis;
-        NextLineHost.Opacity = 1;
-        DisplayCurrentLine = _currentLine;
-        DisplayNextLine = _nextLine;
-        IncomingNextLineTextBlock.Text = string.Empty;
-        ResetLineTransforms();
-
-        _pendingCurrentLine = null;
-        _pendingNextLine = null;
-    }
-
-    private void OnCompositionRendering(object? sender, EventArgs e)
-    {
-        if (!_isLineTransitionAnimating)
-        {
-            return;
-        }
-
-        var progress = Math.Clamp(
-            _lineTransitionClock.Elapsed.TotalMilliseconds / _lineTransitionDuration.TotalMilliseconds,
-            0,
-            1);
-
-        ApplyTransitionVisuals(progress);
-
-        if (progress >= 1)
-        {
-            CompleteLinePromotionTransition();
-        }
-    }
-
-    private void ApplyTransitionVisuals(double progress)
-    {
-        var travelProgress = GetAppleMusicTravelProgress(progress);
-        var currentFade = EaseOutCubic(Clamp01((progress - 0.02) / 0.68));
-        var promotedProgress = EaseOutCubic(Clamp01((progress - 0.06) / 0.72));
-        var incomingProgress = EaseOutCubic(Clamp01(progress / 0.86));
-        var promotedSizeProgress = GetPromotionSizeProgress(progress);
-        var travel = _lineTransitionTravel;
-
-        var translatedY = AlignToPhysicalPixel(-travel * travelProgress);
-        CurrentLineTranslateTransform.Y = translatedY;
-        CurrentLineHost.Opacity = 1 - currentFade;
-        CurrentLineScaleTransform.ScaleX = 1;
-        CurrentLineScaleTransform.ScaleY = 1;
-
-        var promotedFontSize = _suppressPromotedSizeAnimation
-            ? _secondaryLineFontSize
-            : Lerp(_secondaryLineFontSize, CurrentLineTextBlock.FontSize, promotedSizeProgress);
-        NextLineTranslateTransform.Y = translatedY;
-        NextLineHost.Opacity = 1;
-        NextLineTextBlock.FontSize = promotedFontSize;
-        NextLineScaleTransform.ScaleX = 1;
-        NextLineScaleTransform.ScaleY = 1;
-
-        IncomingNextLineTranslateTransform.Y = translatedY;
-        IncomingNextLineHost.Opacity = string.IsNullOrWhiteSpace(IncomingNextLineTextBlock.Text)
-            ? 0
-            : incomingProgress;
-        IncomingNextLineScaleTransform.ScaleX = 1;
-        IncomingNextLineScaleTransform.ScaleY = 1;
-
-        var nextBrightness = Lerp(SecondaryLineBrightness, 1.0, promotedProgress);
-        SetLineBrushes(1.0, nextBrightness, SecondaryLineBrightness);
-    }
-
-    private double AlignToPhysicalPixel(double dipValue)
-    {
-        var dpiScaleY = Media.VisualTreeHelper.GetDpi(this).DpiScaleY;
-        if (dpiScaleY <= 0)
-        {
-            return dipValue;
-        }
-
-        return Math.Round(dipValue * dpiScaleY, MidpointRounding.AwayFromZero) / dpiScaleY;
-    }
-
-    private static double GetAppleMusicTravelProgress(double t)
-    {
-        return EaseOutCubic(Clamp01(t));
-    }
-
-    private static double EaseOutCubic(double t)
-    {
-        var x = 1 - t;
-        return 1 - (x * x * x);
-    }
-
-    private static double EaseOutSine(double t)
-    {
-        return Math.Sin((t * Math.PI) / 2.0);
-    }
-
-    private static double GetPromotionSizeProgress(double t)
-    {
-        // Complete font-size promotion earlier, then hold steady to prevent tail-end jitter.
-        return EaseOutCubic(Clamp01((t - 0.05) / 0.77));
-    }
-
-    private static double Lerp(double from, double to, double t)
-    {
-        return from + ((to - from) * t);
-    }
-
-    private static double Clamp01(double value)
-    {
-        return Math.Clamp(value, 0, 1);
-    }
-
-    private bool ShouldSuppressPromotedSizeAnimation(string promotedLine)
-    {
-        if (string.IsNullOrWhiteSpace(promotedLine))
-        {
-            return false;
-        }
-
-        var availableWidth = Math.Max(0, NextLineHost.ActualWidth);
-        if (availableWidth <= 1)
-        {
-            return false;
-        }
-
-        var dpi = Media.VisualTreeHelper.GetDpi(this).PixelsPerDip;
-        var typeface = new Media.Typeface(
-            NextLineTextBlock.FontFamily,
-            NextLineTextBlock.FontStyle,
-            NextLineTextBlock.FontWeight,
-            NextLineTextBlock.FontStretch);
-        var formatted = new Media.FormattedText(
-            promotedLine,
-            CultureInfo.CurrentUICulture,
-            System.Windows.FlowDirection.LeftToRight,
-            typeface,
-            CurrentLineTextBlock.FontSize,
-            Media.Brushes.White,
-            dpi);
-
-        // If line still overflows at primary font size, avoid per-frame font-size changes.
-        return formatted.WidthIncludingTrailingWhitespace >= (availableWidth - 1);
-    }
-
-    private void SetLineBrushes(double currentFactor, double nextFactor, double incomingFactor)
-    {
-        _currentLineBrush.Color = ScaleColorAlpha(_primaryTextColor, currentFactor);
-        _nextLineBrush.Color = ScaleColorAlpha(_primaryTextColor, nextFactor);
-        _incomingLineBrush.Color = ScaleColorAlpha(_primaryTextColor, incomingFactor);
-    }
-
-    private static Media.Color ScaleColorAlpha(Media.Color color, double factor)
-    {
-        var clamped = Clamp01(factor);
-        return Media.Color.FromArgb(
-            (byte)Math.Clamp((int)(color.A * clamped), 0, 255),
-            color.R,
-            color.G,
-            color.B);
-    }
-
-    private static FontWeight ResolveFontWeight(string? value)
-    {
-        var normalized = value?.Trim().ToLowerInvariant();
-        return normalized switch
-        {
-            "light" => FontWeights.Light,
-            "medium" => FontWeights.Medium,
-            "semibold" => FontWeights.SemiBold,
-            "bold" => FontWeights.Bold,
-            _ => FontWeights.Normal
-        };
-    }
-
-    private void ApplyStableLineTrackLayout()
-    {
-        // Keep both lyric rows on a fixed-height track to avoid content-driven remeasure jumps.
-        var primaryLineHeight = Math.Ceiling(CurrentLineTextBlock.FontSize * 1.24);
-        var secondaryLineHeight = Math.Ceiling(_secondaryLineFontSize * 1.24);
-        var trackHeight = Math.Max(primaryLineHeight, secondaryLineHeight) + 1;
-        var dpiScaleY = Media.VisualTreeHelper.GetDpi(this).DpiScaleY;
-        if (dpiScaleY > 0)
-        {
-            // Align row height to physical pixels to reduce sub-pixel baseline drift on handoff.
-            trackHeight = Math.Round(trackHeight * dpiScaleY, MidpointRounding.AwayFromZero) / dpiScaleY;
-        }
-        _lineTrackHeight = trackHeight;
-
-        CurrentLineTrackRow.Height = new GridLength(trackHeight);
-        NextLineTrackRow.Height = new GridLength(trackHeight);
-        IncomingLineTrackRow.Height = new GridLength(trackHeight);
-
-        CurrentLineHost.Height = trackHeight;
-        NextLineHost.Height = trackHeight;
-        IncomingNextLineHost.Height = trackHeight;
-
-        // Force identical line box metrics for all three layers so incoming -> real second line
-        // handoff does not shift by glyph-dependent ascent/descent differences.
-        ApplyFixedLineBox(CurrentLineTextBlock, trackHeight);
-        ApplyFixedLineBox(NextLineTextBlock, trackHeight);
-        ApplyFixedLineBox(IncomingNextLineTextBlock, trackHeight);
-    }
-
-    private static void ApplyFixedLineBox(System.Windows.Controls.TextBlock textBlock, double lineHeight)
-    {
-        textBlock.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
-        textBlock.LineHeight = lineHeight;
-    }
-
-    private static Media.FontFamily ResolveFontFamily(string fontFamilyText)
-    {
-        var candidates = fontFamilyText
-            .Split(new[] { ',', '，' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-        if (candidates.Length == 0)
-        {
-            return new Media.FontFamily("Microsoft YaHei UI");
-        }
-
-        var installed = Media.Fonts.SystemFontFamilies
-            .SelectMany(f => f.FamilyNames.Values.Append(f.Source))
-            .Where(name => !string.IsNullOrWhiteSpace(name))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var candidate in candidates)
-        {
-            if (installed.Contains(candidate))
-            {
-                return new Media.FontFamily(candidate);
-            }
-        }
-
-        return new Media.FontFamily("Microsoft YaHei UI");
-    }
-
-    private double GetLineTravelDistance()
-    {
-        if (_lineTrackHeight > 0.5)
-        {
-            return _lineTrackHeight;
-        }
-
-        var fallback = Math.Round(CurrentLineTextBlock.FontSize * 1.24, MidpointRounding.AwayFromZero) + 1;
-        return Math.Max(12, fallback);
-    }
-
-    private void ResetLineTransforms()
-    {
-        _isLineTransitionAnimating = false;
-        _suppressPromotedSizeAnimation = false;
-        Media.CompositionTarget.Rendering -= OnCompositionRendering;
-        _lineTransitionClock.Reset();
-
-        CurrentLineTranslateTransform.BeginAnimation(Media.TranslateTransform.YProperty, null);
-        NextLineTranslateTransform.BeginAnimation(Media.TranslateTransform.YProperty, null);
-        IncomingNextLineTranslateTransform.BeginAnimation(Media.TranslateTransform.YProperty, null);
-        CurrentLineScaleTransform.BeginAnimation(Media.ScaleTransform.ScaleXProperty, null);
-        CurrentLineScaleTransform.BeginAnimation(Media.ScaleTransform.ScaleYProperty, null);
-        NextLineScaleTransform.BeginAnimation(Media.ScaleTransform.ScaleXProperty, null);
-        NextLineScaleTransform.BeginAnimation(Media.ScaleTransform.ScaleYProperty, null);
-        IncomingNextLineScaleTransform.BeginAnimation(Media.ScaleTransform.ScaleXProperty, null);
-        IncomingNextLineScaleTransform.BeginAnimation(Media.ScaleTransform.ScaleYProperty, null);
-        CurrentLineHost.BeginAnimation(OpacityProperty, null);
-        NextLineHost.BeginAnimation(OpacityProperty, null);
-        IncomingNextLineHost.BeginAnimation(OpacityProperty, null);
-
-        CurrentLineTranslateTransform.Y = 0;
-        NextLineTranslateTransform.Y = 0;
-        IncomingNextLineTranslateTransform.Y = 0;
-        CurrentLineScaleTransform.ScaleX = 1;
-        CurrentLineScaleTransform.ScaleY = 1;
-        NextLineScaleTransform.ScaleX = 1;
-        NextLineScaleTransform.ScaleY = 1;
-        IncomingNextLineScaleTransform.ScaleX = 1;
-        IncomingNextLineScaleTransform.ScaleY = 1;
-        NextLineTextBlock.FontSize = _secondaryLineFontSize;
-        IncomingNextLineTextBlock.FontSize = _secondaryLineFontSize;
-        NextLineTextBlock.TextTrimming = TextTrimming.CharacterEllipsis;
-        IncomingNextLineTextBlock.TextTrimming = TextTrimming.CharacterEllipsis;
-        CurrentLineHost.Opacity = 1;
-        NextLineHost.Opacity = 1;
-        IncomingNextLineHost.Opacity = 0;
-        IncomingNextLineTextBlock.Text = string.Empty;
-        SetLineBrushes(1.0, SecondaryLineBrightness, SecondaryLineBrightness);
     }
 
     private void UpdateCover(PlaybackSnapshot snapshot)
@@ -1292,7 +891,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        if (_isSuspendedForSettings || app.IsExiting || !app.UserWantsLyricsVisible)
+        if (app.IsExiting || !app.UserWantsLyricsVisible)
         {
             return;
         }
@@ -1306,50 +905,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         AttachToTaskbarHost();
     }
 
-    public void SuspendForSettings()
-    {
-        if (_isSuspendedForSettings)
-        {
-            return;
-        }
-
-        _isSuspendedForSettings = true;
-        _timer.Stop();
-        Media.CompositionTarget.Rendering -= OnCompositionRendering;
-        ResetLineTransforms();
-
-        if (IsVisible)
-        {
-            Hide();
-        }
-    }
-
-    public void ResumeAfterSettings()
-    {
-        if (!_isSuspendedForSettings)
-        {
-            return;
-        }
-
-        _isSuspendedForSettings = false;
-
-        if (System.Windows.Application.Current is App app && app.UserWantsLyricsVisible && !app.IsExiting)
-        {
-            Show();
-            AnchorToTaskbar();
-            AttachToTaskbarHost();
-
-            if (!_timer.IsEnabled)
-            {
-                _timer.Start();
-            }
-        }
-    }
-
-    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
-    {
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
-    }
 }
 
 internal static class NativeMethods
