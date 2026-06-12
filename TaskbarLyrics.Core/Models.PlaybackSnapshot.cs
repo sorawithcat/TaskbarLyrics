@@ -6,4 +6,5 @@ public sealed record PlaybackSnapshot(
     TrackInfo? Track,
     byte[]? CoverImageBytes = null,
     TimeSpan? RawPosition = null,
-    TimeSpan? ExtrapolatedPosition = null);
+    TimeSpan? ExtrapolatedPosition = null,
+    bool IsCoverLoading = false);

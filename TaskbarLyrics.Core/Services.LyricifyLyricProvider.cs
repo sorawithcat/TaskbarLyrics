@@ -50,12 +50,12 @@ public sealed class LyricifyLyricProvider : LyricProviderBase
                 if (_searcherType == Lyricify.Lyrics.Searchers.Searchers.Netease && track.SourceApp.Equals("Netease", StringComparison.OrdinalIgnoreCase))
                 {
                     Log.Info($"LyricifyLyricProvider [{SourceApp}] 命中 SMTC 网易云媒体 ID: {track.SongId}，直接跳转获取歌词");
-                    searchResult = new NeteaseSearchResult(track.Title, new[] { track.Artist }, string.Empty, Array.Empty<string>(), (int)track.Duration.TotalMilliseconds, track.SongId);
+                    searchResult = new NeteaseSearchResult(track.Title, new[] { track.Artist }, track.Album, Array.Empty<string>(), (int)track.Duration.TotalMilliseconds, track.SongId);
                 }
                 else if (_searcherType == Lyricify.Lyrics.Searchers.Searchers.QQMusic && track.SourceApp.Equals("QQMusic", StringComparison.OrdinalIgnoreCase))
                 {
                     Log.Info($"LyricifyLyricProvider [{SourceApp}] 命中 SMTC QQ音乐媒体 ID: {track.SongId}，直接跳转获取歌词");
-                    searchResult = new QQMusicSearchResult(track.Title, new[] { track.Artist }, string.Empty, Array.Empty<string>(), (int)track.Duration.TotalMilliseconds, track.SongId, string.Empty);
+                    searchResult = new QQMusicSearchResult(track.Title, new[] { track.Artist }, track.Album, Array.Empty<string>(), (int)track.Duration.TotalMilliseconds, track.SongId, string.Empty);
                     qqCandidates = new List<QQMusicSearchResult> { (QQMusicSearchResult)searchResult };
                 }
             }
@@ -86,36 +86,15 @@ public sealed class LyricifyLyricProvider : LyricProviderBase
                 }
                 else if (_searcherType == Lyricify.Lyrics.Searchers.Searchers.QQMusic)
                 {
-                    var response = await ProviderHelper.QQMusicApi.Search(
-                        track.Title + " " + track.Artist,
-                        Lyricify.Lyrics.Providers.Web.QQMusic.Api.SearchTypeEnum.SONG_ID);
-                    var songs = response?.Req_1?.Data?.Body?.Song?.List;
-                    if (songs != null)
-                    {
-                        qqCandidates = songs
-                            .SelectMany(song => new[] { song }.Concat(song.Group ?? Enumerable.Empty<Lyricify.Lyrics.Providers.Web.QQMusic.Song>()))
-                            .Select(song => new QQMusicSearchResult(song))
-                            .Select(candidate => new
-                            {
-                                Candidate = candidate,
-                                Score = ScoreCandidate(track, candidate)
-                            })
-                            .Where(x => x.Score >= LyricMatchingPolicy.MinimumAcceptedMatchScore)
-                            .OrderByDescending(x => x.Score)
-                            .Select(x => x.Candidate)
-                            .ToList();
-                        searchResult = qqCandidates.FirstOrDefault();
-                    }
+                    var searchMetadata = BuildTrackMetadata(track);
+                    searchResult = await SearchHelper.Search(
+                        searchMetadata,
+                        _searcherType,
+                        Lyricify.Lyrics.Searchers.Helpers.CompareHelper.MatchType.NoMatch);
                 }
                 else
                 {
-                    var searchMetadata = new TrackMultiArtistMetadata
-                    {
-                        Title = track.Title,
-                        Artist = track.Artist,
-                        Album = string.Empty,
-                        DurationMs = (int)track.Duration.TotalMilliseconds
-                    };
+                    var searchMetadata = BuildTrackMetadata(track);
 
                     searchResult = await SearchHelper.Search(
                         searchMetadata, 
@@ -165,31 +144,39 @@ public sealed class LyricifyLyricProvider : LyricProviderBase
                 foreach (var candidate in qqCandidates ?? new List<QQMusicSearchResult> { qqResult })
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    ISearchResult candidateSearchResult = candidate;
                     var candidateScore = ScoreCandidate(track, candidate);
+                    Log.Debug($"LyricifyLyricProvider [QQMusic] QQ 候选诊断: Title='{candidateSearchResult.Title}', Artist='{candidateSearchResult.Artist}', Album='{candidateSearchResult.Album}', DurationMs={candidateSearchResult.DurationMs ?? 0}, Id='{candidate.Id}', Mid='{candidate.Mid}', Score={candidateScore}");
                     if (candidateScore < LyricMatchingPolicy.MinimumAcceptedMatchScore)
                     {
+                        Log.Debug($"LyricifyLyricProvider [QQMusic] QQ 候选分数低于准入线，跳过: Score={candidateScore}");
                         continue;
                     }
 
-                    if (!string.IsNullOrWhiteSpace(candidate.Mid))
-                    {
-                        var lrcResponse = await ProviderHelper.QQMusicApi.GetLyric(candidate.Mid);
-                        rawLyric = lrcResponse?.Lyric;
-                        rawTranslation = lrcResponse?.Trans;
-                    }
-
-                    if (string.IsNullOrWhiteSpace(rawLyric))
+                    if (!string.IsNullOrWhiteSpace(candidate.Id))
                     {
                         var response = await ProviderHelper.QQMusicApi.GetLyricsAsync(candidate.Id);
                         rawLyric = response?.Lyrics;
                         rawTranslation = response?.Trans;
+                        Log.Debug($"LyricifyLyricProvider [QQMusic] GetLyricsAsync(id) 返回: Id='{candidate.Id}', LyricLen={GetTextLength(rawLyric)}, TransLen={GetTextLength(rawTranslation)}");
+                    }
+
+                    if (string.IsNullOrWhiteSpace(rawLyric) && !string.IsNullOrWhiteSpace(candidate.Mid))
+                    {
+                        var lrcResponse = await ProviderHelper.QQMusicApi.GetLyric(candidate.Mid);
+                        rawLyric = lrcResponse?.Lyric;
+                        rawTranslation = lrcResponse?.Trans;
+                        Log.Debug($"LyricifyLyricProvider [QQMusic] GetLyric(mid) 返回: Mid='{candidate.Mid}', LyricLen={GetTextLength(rawLyric)}, TransLen={GetTextLength(rawTranslation)}");
                     }
 
                     if (!string.IsNullOrWhiteSpace(rawLyric))
                     {
+                        Log.Debug($"LyricifyLyricProvider [QQMusic] QQ 候选返回有效歌词，采用: Id='{candidate.Id}', Mid='{candidate.Mid}', Score={candidateScore}");
                         matchScore = candidateScore;
                         break;
                     }
+
+                    Log.Debug($"LyricifyLyricProvider [QQMusic] QQ 候选未返回有效歌词: Id='{candidate.Id}', Mid='{candidate.Mid}'");
                 }
             }
             else if (_searcherType == Lyricify.Lyrics.Searchers.Searchers.Netease && searchResult is NeteaseSearchResult neteaseResult)
@@ -276,7 +263,7 @@ public sealed class LyricifyLyricProvider : LyricProviderBase
         }
 
         // 5. 解析 LRC 歌词行
-        var lines = ParseLrc(rawLyric);
+        var lines = ParseRawLyrics(rawLyric);
         if (!string.IsNullOrWhiteSpace(rawTranslation))
         {
             // 对齐翻译歌词行并合并
@@ -293,9 +280,106 @@ public sealed class LyricifyLyricProvider : LyricProviderBase
             }
         }
 
-        if (lines.Count == 0) return null;
+        if (lines.Count == 0)
+        {
+            Log.Info($"LyricifyLyricProvider [{SourceApp}] 原始歌词非空，但解析后没有有效时间轴行");
+            return null;
+        }
 
         return new LyricDocument(lines, matchScore);
+    }
+
+    private List<LyricLine> ParseRawLyrics(string rawLyric)
+    {
+        var lines = ParseLrc(rawLyric);
+        if (lines.Count > 0 ||
+            _searcherType != Lyricify.Lyrics.Searchers.Searchers.QQMusic)
+        {
+            return lines;
+        }
+
+        try
+        {
+            lines = ParseQrc(rawLyric);
+            Log.Debug($"LyricifyLyricProvider [QQMusic] QRC 解析结果: Lines={lines.Count}");
+            return lines;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"LyricifyLyricProvider [QQMusic] QRC 解析失败: {ex.Message}");
+            return new List<LyricLine>();
+        }
+    }
+
+    private static List<LyricLine> ParseQrc(string rawLyric)
+    {
+        var parsed = Lyricify.Lyrics.Parsers.QrcParser.Parse(rawLyric);
+        var parsedLines = parsed?.Lines?
+            .Where(line => !string.IsNullOrWhiteSpace(line.Text))
+            .ToList();
+        if (parsedLines is not { Count: > 0 })
+        {
+            return new List<LyricLine>();
+        }
+
+        var lines = new List<LyricLine>();
+        foreach (var parsedLine in parsedLines)
+        {
+            var startMs = Math.Max(0, parsedLine.StartTime ?? 0);
+            var text = NormalizeQrcText(parsedLine.Text);
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                continue;
+            }
+
+            List<LyricSyllable>? syllables = null;
+            if (parsedLine is SyllableLineInfo syllableLine &&
+                syllableLine.Syllables is { Count: > 0 })
+            {
+                syllables = syllableLine.Syllables
+                    .Where(syllable => !string.IsNullOrEmpty(syllable.Text))
+                    .Select(syllable =>
+                    {
+                        var syllableStartMs = Math.Max(0, syllable.StartTime - startMs);
+                        var syllableDurationMs = Math.Max(1, syllable.EndTime - syllable.StartTime);
+                        return new LyricSyllable(
+                            TimeSpan.FromMilliseconds(syllableStartMs),
+                            TimeSpan.FromMilliseconds(syllableDurationMs),
+                            syllable.Text);
+                    })
+                    .ToList();
+            }
+
+            lines.Add(new LyricLine(TimeSpan.FromMilliseconds(startMs), text, Syllables: syllables));
+        }
+
+        return lines
+            .OrderBy(line => line.Timestamp)
+            .ToList();
+    }
+
+    private static string NormalizeQrcText(string text)
+    {
+        return text
+            .Replace("\r", string.Empty, StringComparison.Ordinal)
+            .Replace("\n", " ", StringComparison.Ordinal)
+            .Trim();
+    }
+
+    private static TrackMultiArtistMetadata BuildTrackMetadata(TrackInfo track)
+    {
+        return new TrackMultiArtistMetadata
+        {
+            Title = track.Title,
+            Artist = track.Artist,
+            Album = track.Album,
+            DurationMs = (int)track.Duration.TotalMilliseconds
+        };
+    }
+
+    private static int GetTextLength(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? 0 : value.Length;
     }
 
     private int ScoreCandidate(TrackInfo track, ISearchResult candidate)

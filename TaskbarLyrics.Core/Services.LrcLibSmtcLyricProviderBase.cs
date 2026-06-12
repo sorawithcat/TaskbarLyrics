@@ -495,6 +495,7 @@ public abstract class LrcLibSmtcLyricProviderBase : ILyricProvider
             "lrclib-search",
             targetTitle,
             targetArtist,
+            string.Empty,
             "LrcLib",
             targetDuration);
         return LyricMatcher.Score(target, resultTitle, resultArtist ?? string.Empty, resultDurationInSeconds);

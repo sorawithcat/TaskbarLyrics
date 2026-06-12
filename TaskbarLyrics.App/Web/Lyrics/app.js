@@ -9,6 +9,7 @@ const nextLineTextEl = document.getElementById("nextLineText");
 const incomingLineTextEl = document.getElementById("incomingLineText");
 const coverEl = document.getElementById("cover");
 const coverImageEl = document.getElementById("coverImage");
+const coverImageNextEl = document.getElementById("coverImageNext");
 const coverFallbackEl = document.getElementById("coverFallback");
 const root = document.documentElement;
 
@@ -43,6 +44,10 @@ let delayedFrameTimer = 0;
 let coverUpdateTimer = 0;
 let coverStateTimer = 0;
 let coverSwitchStartedAt = 0;
+let activeCoverImageEl = coverImageEl;
+let standbyCoverImageEl = coverImageNextEl;
+let currentCoverUri = "";
+let coverGeneration = 0;
 
 function normalizeWeight(weight) {
   const normalized = String(weight || "").trim().toLowerCase();
@@ -175,23 +180,74 @@ function setCoverLoadingState(isLoading) {
   }, delay);
 }
 
-function setCoverImageEntering() {
-  if (!coverImageEl) {
-    return;
-  }
-
-  coverImageEl.style.display = "block";
-  coverImageEl.style.opacity = "0";
-  window.requestAnimationFrame(() => {
-    coverImageEl.style.opacity = "1";
-  });
-}
-
 function clearCoverUpdateTimer() {
   if (coverUpdateTimer) {
     window.clearTimeout(coverUpdateTimer);
     coverUpdateTimer = 0;
   }
+}
+
+function swapCoverImageLayers() {
+  const previous = activeCoverImageEl;
+  activeCoverImageEl = standbyCoverImageEl;
+  standbyCoverImageEl = previous;
+}
+
+function clearImageElement(imageEl) {
+  if (!imageEl) {
+    return;
+  }
+
+  imageEl.onload = null;
+  imageEl.onerror = null;
+  imageEl.style.opacity = "0";
+  imageEl.removeAttribute("src");
+}
+
+function crossfadeToCoverImage(uri, generation, onDone) {
+  if (!activeCoverImageEl || !standbyCoverImageEl) {
+    if (typeof onDone === "function") {
+      onDone();
+    }
+    return;
+  }
+
+  const incoming = standbyCoverImageEl;
+  const outgoing = activeCoverImageEl;
+  incoming.onload = null;
+  incoming.onerror = null;
+  incoming.style.opacity = "0";
+  incoming.src = uri;
+
+  window.requestAnimationFrame(() => {
+    if (generation !== coverGeneration) {
+      return;
+    }
+
+    incoming.style.opacity = "1";
+    outgoing.style.opacity = "0";
+    if (coverFallbackEl) {
+      coverFallbackEl.style.opacity = "0";
+    }
+  });
+
+  coverUpdateTimer = window.setTimeout(() => {
+    coverUpdateTimer = 0;
+    if (generation !== coverGeneration) {
+      return;
+    }
+
+    clearImageElement(outgoing);
+    swapCoverImageLayers();
+    currentCoverUri = uri;
+    if (coverFallbackEl) {
+      coverFallbackEl.style.display = "none";
+      coverFallbackEl.style.opacity = "1";
+    }
+    if (typeof onDone === "function") {
+      onDone();
+    }
+  }, 460);
 }
 
 function applyFallbackCover(text, fallbackColor) {
@@ -553,47 +609,61 @@ window.taskbarLyrics = {
   setCover(dataUri, fallbackText, fallbackColor) {
     const uri = (dataUri ?? "").toString().trim();
     const text = toDisplayLine(fallbackText, "N").slice(0, 1).toUpperCase();
+    const generation = ++coverGeneration;
+    clearCoverUpdateTimer();
+
+    if (uri.length > 0 && uri === currentCoverUri) {
+      setCoverLoadingState(false);
+      return;
+    }
+
     setCoverLoadingState(true);
 
-    if (coverImageEl) {
-      if (uri.length > 0) {
-        coverImageEl.style.opacity = "0";
-        coverImageEl.onload = () => {
-          setCoverImageEntering();
-          setCoverLoadingState(false);
-          if (coverFallbackEl) {
-            coverFallbackEl.style.display = "none";
-          }
-        };
-        coverImageEl.onerror = () => {
-          coverImageEl.style.display = "none";
-          coverImageEl.style.opacity = "0";
-          scheduleFallbackCoverUpdate(text, fallbackColor, () => {
-            if (coverFallbackEl) {
-              coverFallbackEl.style.display = "flex";
-            }
-            setCoverLoadingState(false);
-          });
-        };
-        window.setTimeout(() => {
-          coverImageEl.src = uri;
-        }, coverSwapDelayMs);
-      } else {
-        coverImageEl.onload = null;
-        coverImageEl.onerror = null;
-        coverImageEl.style.opacity = "0";
+    if (uri.length > 0) {
+      const preloader = new Image();
+      preloader.onload = () => {
+        if (generation !== coverGeneration) {
+          return;
+        }
+
+        crossfadeToCoverImage(uri, generation, () => setCoverLoadingState(false));
+      };
+      preloader.onerror = () => {
+        if (generation !== coverGeneration) {
+          return;
+        }
+
         scheduleFallbackCoverUpdate(text, fallbackColor, () => {
-          coverImageEl.removeAttribute("src");
-          coverImageEl.style.display = "none";
           if (coverFallbackEl) {
             coverFallbackEl.style.display = "flex";
+            coverFallbackEl.style.opacity = "1";
           }
+          clearImageElement(activeCoverImageEl);
+          clearImageElement(standbyCoverImageEl);
+          currentCoverUri = "";
           setCoverLoadingState(false);
         });
-      }
-    } else {
-      scheduleFallbackCoverUpdate(text, fallbackColor, () => setCoverLoadingState(false));
+      };
+      window.setTimeout(() => {
+        if (generation !== coverGeneration) {
+          return;
+        }
+
+        preloader.src = uri;
+      }, coverSwapDelayMs);
+      return;
     }
+
+    scheduleFallbackCoverUpdate(text, fallbackColor, () => {
+      if (coverFallbackEl) {
+        coverFallbackEl.style.display = "flex";
+        coverFallbackEl.style.opacity = "1";
+      }
+      clearImageElement(activeCoverImageEl);
+      clearImageElement(standbyCoverImageEl);
+      currentCoverUri = "";
+      setCoverLoadingState(false);
+    });
   },
 
   applyStyle(payload) {

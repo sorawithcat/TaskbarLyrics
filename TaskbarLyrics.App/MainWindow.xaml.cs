@@ -32,6 +32,7 @@ public partial class MainWindow : Window
     private string _currentLine = "TaskbarLyrics 已启动";
     private string _nextLine = "等待歌词...";
     private string? _lastCoverTrackId;
+    private string? _currentCoverVisualTrackId;
     private string? _currentCoverDataUri;
     private string _currentCoverFallbackText = "N";
     private string _currentCoverFallbackColorCss = "rgba(67, 160, 71, 1)";
@@ -313,6 +314,8 @@ public partial class MainWindow : Window
             EnsureVisibleIfExpected();
 
             var snapshot = await _musicSessionProvider.GetCurrentAsync();
+            UpdateCover(snapshot);
+
             var frame = await _lyricSyncService.GetDisplayFrameAsync(snapshot);
             LogTickDiagnostics(snapshot, frame);
 
@@ -333,7 +336,6 @@ public partial class MainWindow : Window
 
             UpdateLyricLines(current, next, frame.LineProgress);
             PushLyricsToWebView(current, next, frame.LineProgress, frame.CurrentLineIndex, _lastWebTrackId);
-            UpdateCover(snapshot);
         }
         catch (Exception ex)
         {
@@ -378,7 +380,9 @@ public partial class MainWindow : Window
     private void UpdateCover(PlaybackSnapshot snapshot)
     {
         var trackId = snapshot.Track?.Id;
-        if (string.Equals(trackId, _lastCoverTrackId, StringComparison.Ordinal))
+        var isSameRequestedTrack = string.Equals(trackId, _lastCoverTrackId, StringComparison.Ordinal);
+        var isCurrentTrackVisual = string.Equals(trackId, _currentCoverVisualTrackId, StringComparison.Ordinal);
+        if (isSameRequestedTrack && isCurrentTrackVisual)
         {
             // Proceed only if we previously had no cover for this track but now we have bytes.
             if (_currentCoverDataUri != null || snapshot.CoverImageBytes == null)
@@ -396,11 +400,18 @@ public partial class MainWindow : Window
         if (snapshot.CoverImageBytes is { Length: > 0 } bytes)
         {
             _currentCoverDataUri = BuildCoverDataUri(bytes);
+            _currentCoverVisualTrackId = trackId;
             PushCoverToWebView();
             return;
         }
 
+        if (snapshot.IsCoverLoading)
+        {
+            return;
+        }
+
         _currentCoverDataUri = null;
+        _currentCoverVisualTrackId = trackId;
         PushCoverToWebView();
     }
 

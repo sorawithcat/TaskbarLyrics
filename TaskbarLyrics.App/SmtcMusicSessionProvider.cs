@@ -3,6 +3,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using TaskbarLyrics.Core.Abstractions;
 using TaskbarLyrics.Core.Models;
+using TaskbarLyrics.Core.Utilities;
 using Windows.Media.Control;
 using Windows.Storage.Streams;
 
@@ -24,8 +25,12 @@ public sealed class SmtcMusicSessionProvider : IMusicSessionProvider
     private string[] _recognitionOrder = DefaultRecognitionOrder;
     private HashSet<string> _enabledSources = new(DefaultRecognitionOrder, StringComparer.OrdinalIgnoreCase);
     private string _lastCoverMetadataKey = string.Empty;
+    private string _lastQqMetadataDiagnosticsKey = string.Empty;
     private byte[]? _lastCoverImageBytes;
     private DateTimeOffset _nextMissingCoverRetryUtc;
+    private readonly object _coverLock = new();
+    private Task? _coverReadTask;
+    private string _coverReadMetadataKey = string.Empty;
 
     public void SetRecognitionOrder(
         IReadOnlyList<string>? order,
@@ -80,7 +85,9 @@ public sealed class SmtcMusicSessionProvider : IMusicSessionProvider
 
         string title = string.Empty;
         string artist = string.Empty;
+        string album = string.Empty;
         byte[]? coverImageBytes = null;
+        bool isCoverLoading = false;
         string? songId = null;
 
         try
@@ -88,14 +95,14 @@ public sealed class SmtcMusicSessionProvider : IMusicSessionProvider
             var media = await session.TryGetMediaPropertiesAsync().AsTask(cancellationToken);
             title = media?.Title?.Trim() ?? string.Empty;
             artist = media?.Artist?.Trim() ?? string.Empty;
+            album = media?.AlbumTitle?.Trim() ?? string.Empty;
 
-            coverImageBytes = await GetCoverBytesAsync(
+            (coverImageBytes, isCoverLoading) = GetCoverBytes(
                 sourceApp,
                 title,
                 artist,
                 media?.Thumbnail,
-                nowUtc,
-                cancellationToken);
+                nowUtc);
 
             // 从 Genres 流派元数据列表中解析播放器写入的 SongId (例如网易云 NCM-, QQ音乐 QQ-)
             if (media?.Genres != null)
@@ -111,6 +118,17 @@ public sealed class SmtcMusicSessionProvider : IMusicSessionProvider
                     songId = media.Genres
                         .FirstOrDefault(x => x.StartsWith("QQ-", StringComparison.OrdinalIgnoreCase))?
                         .Replace("QQ-", "");
+                }
+
+                if (sourceApp.Equals("QQMusic", StringComparison.OrdinalIgnoreCase))
+                {
+                    var genresText = string.Join(" | ", media.Genres);
+                    var diagnosticsKey = $"{title}|{artist}|{album}|{songId}|{genresText}";
+                    if (!string.Equals(_lastQqMetadataDiagnosticsKey, diagnosticsKey, StringComparison.Ordinal))
+                    {
+                        _lastQqMetadataDiagnosticsKey = diagnosticsKey;
+                        Log.Debug($"SMTC QQMusic metadata: Album='{album}', SongId='{songId ?? string.Empty}', Genres='{genresText}'");
+                    }
                 }
             }
         }
@@ -140,7 +158,7 @@ public sealed class SmtcMusicSessionProvider : IMusicSessionProvider
         }
 
         var trackId = $"{sourceApp}|{title}|{artist}";
-        var track = new TrackInfo(trackId, title, artist, sourceApp, timeline.EndTime, songId);
+        var track = new TrackInfo(trackId, title, artist, album, sourceApp, timeline.EndTime, songId);
         var diagnostics = new SmtcTimelineDiagnostics(
             CapturedAtUtc: nowUtc,
             SourceAppUserModelId: session.SourceAppUserModelId ?? string.Empty,
@@ -169,7 +187,8 @@ public sealed class SmtcMusicSessionProvider : IMusicSessionProvider
             Track: track,
             CoverImageBytes: coverImageBytes,
             RawPosition: position,
-            ExtrapolatedPosition: extrapolatedPosition);
+            ExtrapolatedPosition: extrapolatedPosition,
+            IsCoverLoading: isCoverLoading);
     }
 
     private PlaybackSnapshot BuildProcessFallbackSnapshot()
@@ -191,6 +210,7 @@ public sealed class SmtcMusicSessionProvider : IMusicSessionProvider
                         Id: $"Netease|{inferredTitle}|{inferredArtist}",
                         Title: inferredTitle,
                         Artist: inferredArtist,
+                        Album: string.Empty,
                         SourceApp: "Netease",
                         Duration: TimeSpan.Zero),
                     CoverImageBytes: null);
@@ -208,6 +228,7 @@ public sealed class SmtcMusicSessionProvider : IMusicSessionProvider
                     Id: "Netease|ProcessFallback",
                     Title: "Unknown Title",
                     Artist: "Unknown Artist",
+                    Album: string.Empty,
                     SourceApp: "Netease",
                     Duration: TimeSpan.Zero),
                 CoverImageBytes: null);
@@ -227,6 +248,7 @@ public sealed class SmtcMusicSessionProvider : IMusicSessionProvider
                     Id: "QQMusic|ProcessFallback",
                     Title: "Unknown Title",
                     Artist: "Unknown Artist",
+                    Album: string.Empty,
                     SourceApp: "QQMusic",
                     Duration: TimeSpan.Zero),
                 CoverImageBytes: null);
@@ -246,6 +268,7 @@ public sealed class SmtcMusicSessionProvider : IMusicSessionProvider
                     Id: "Kugou|ProcessFallback",
                     Title: "Unknown Title",
                     Artist: "Unknown Artist",
+                    Album: string.Empty,
                     SourceApp: "Kugou",
                     Duration: TimeSpan.Zero),
                 CoverImageBytes: null);
@@ -744,29 +767,68 @@ public sealed class SmtcMusicSessionProvider : IMusicSessionProvider
         }
     }
 
-    private async Task<byte[]?> GetCoverBytesAsync(
+    private (byte[]? Bytes, bool IsLoading) GetCoverBytes(
         string sourceApp,
         string title,
         string artist,
         IRandomAccessStreamReference? thumbnail,
-        DateTimeOffset nowUtc,
-        CancellationToken cancellationToken)
+        DateTimeOffset nowUtc)
     {
         var metadataKey = $"{sourceApp}|{title}|{artist}";
-        var trackChanged = !string.Equals(metadataKey, _lastCoverMetadataKey, StringComparison.Ordinal);
-        var shouldRetryMissingCover = _lastCoverImageBytes is null && nowUtc >= _nextMissingCoverRetryUtc;
+        byte[]? cachedCover;
+        var isLoading = false;
 
-        if (!trackChanged && !shouldRetryMissingCover)
+        lock (_coverLock)
         {
-            return _lastCoverImageBytes;
+            var trackChanged = !string.Equals(metadataKey, _lastCoverMetadataKey, StringComparison.Ordinal);
+            if (trackChanged)
+            {
+                _lastCoverMetadataKey = metadataKey;
+                _lastCoverImageBytes = null;
+                _nextMissingCoverRetryUtc = nowUtc;
+            }
+
+            cachedCover = _lastCoverImageBytes;
+            var shouldRetryMissingCover = cachedCover is null && nowUtc >= _nextMissingCoverRetryUtc;
+            var isReadingCurrentCover =
+                _coverReadTask is { IsCompleted: false } &&
+                string.Equals(_coverReadMetadataKey, metadataKey, StringComparison.Ordinal);
+
+            if (thumbnail is not null && shouldRetryMissingCover && !isReadingCurrentCover)
+            {
+                _coverReadMetadataKey = metadataKey;
+                _coverReadTask = ReadCoverBytesInBackgroundAsync(metadataKey, thumbnail);
+                _nextMissingCoverRetryUtc = DateTimeOffset.MaxValue;
+                isLoading = true;
+            }
+            else
+            {
+                isLoading = cachedCover is null && isReadingCurrentCover;
+            }
         }
 
-        _lastCoverMetadataKey = metadataKey;
-        _lastCoverImageBytes = await ReadCoverBytesAsync(thumbnail, cancellationToken);
-        _nextMissingCoverRetryUtc = _lastCoverImageBytes is null
-            ? nowUtc + MissingCoverRetryInterval
-            : DateTimeOffset.MaxValue;
-        return _lastCoverImageBytes;
+        return (cachedCover, isLoading);
+    }
+
+    private async Task ReadCoverBytesInBackgroundAsync(
+        string metadataKey,
+        IRandomAccessStreamReference thumbnail)
+    {
+        var coverBytes = await ReadCoverBytesAsync(thumbnail, CancellationToken.None);
+        var nowUtc = DateTimeOffset.UtcNow;
+
+        lock (_coverLock)
+        {
+            if (!string.Equals(metadataKey, _lastCoverMetadataKey, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _lastCoverImageBytes = coverBytes;
+            _nextMissingCoverRetryUtc = coverBytes is null
+                ? nowUtc + MissingCoverRetryInterval
+                : DateTimeOffset.MaxValue;
+        }
     }
 
 }

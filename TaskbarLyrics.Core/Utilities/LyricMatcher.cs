@@ -32,6 +32,11 @@ public static class LyricMatcher
 
         double titleSim = GetStringSimilarity(normalizedTargetTitle, normalizedResultTitle);
         double artistSim = GetStringSimilarity(normalizedTargetArtist, normalizedResultArtist);
+        double artistTokenOverlapSim = GetTokenOverlapSimilarity(normalizedTargetArtist, normalizedResultArtist);
+        if (artistTokenOverlapSim > 0)
+        {
+            artistSim = Math.Max(artistSim, artistTokenOverlapSim);
+        }
         double durationSim = GetDurationSimilarity(target.Duration.TotalSeconds, resultDurationInSeconds);
 
         if (!IsTitleMatchAcceptable(normalizedTargetTitle, normalizedResultTitle, titleSim))
@@ -52,7 +57,9 @@ public static class LyricMatcher
         }
 
         bool hasDuration = target.Duration.TotalSeconds > 0 && resultDurationInSeconds > 0;
-        if (hasDuration && Math.Abs(target.Duration.TotalSeconds - resultDurationInSeconds) >= 20)
+        if (!IsQqTrack(target) &&
+            hasDuration &&
+            Math.Abs(target.Duration.TotalSeconds - resultDurationInSeconds) >= 20)
         {
             Log.Debug($"LyricMatcher rejected duration mismatch: {target.Duration.TotalSeconds:F0}s vs {resultDurationInSeconds}s");
             return 0;
@@ -135,7 +142,39 @@ public static class LyricMatcher
     private static bool HasArtistOverlap(string targetArtist, string resultArtist)
     {
         return targetArtist.Contains(resultArtist, StringComparison.Ordinal) ||
-               resultArtist.Contains(targetArtist, StringComparison.Ordinal);
+               resultArtist.Contains(targetArtist, StringComparison.Ordinal) ||
+               GetTokenOverlapSimilarity(targetArtist, resultArtist) > 0;
+    }
+
+    private static bool IsQqTrack(TrackInfo target)
+    {
+        return string.Equals(target.SourceApp, "QQMusic", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static double GetTokenOverlapSimilarity(string s1, string s2)
+    {
+        var tokens1 = SplitComparableTokens(s1);
+        var tokens2 = SplitComparableTokens(s2);
+        if (tokens1.Count == 0 || tokens2.Count == 0)
+        {
+            return 0;
+        }
+
+        var overlap = tokens1.Intersect(tokens2, StringComparer.Ordinal).Count();
+        if (overlap == 0)
+        {
+            return 0;
+        }
+
+        return ((double)overlap / tokens1.Count + (double)overlap / tokens2.Count) / 2.0;
+    }
+
+    private static HashSet<string> SplitComparableTokens(string value)
+    {
+        return value
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(token => token.Length >= 2)
+            .ToHashSet(StringComparer.Ordinal);
     }
 
     public static string NormalizeForSearch(string? value)
