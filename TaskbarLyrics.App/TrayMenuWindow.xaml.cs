@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Threading;
 using System.Runtime.InteropServices;
+using Media = System.Windows.Media;
 using Forms = System.Windows.Forms;
 
 namespace TaskbarLyrics.App;
@@ -27,6 +28,7 @@ public partial class TrayMenuWindow : Window
     {
         InitializeComponent();
         AppIconProvider.ApplyWindowIcon(this);
+        ApplyTheme();
         _toggleLyricsWindow = toggleLyricsWindow;
         _openSettings = openSettings;
         _exitApp = exitApp;
@@ -37,6 +39,26 @@ public partial class TrayMenuWindow : Window
         };
         _closeTimer.Tick += OnCloseTimerTick;
         Closed += (_, _) => _closeTimer.Stop();
+    }
+
+    private void ApplyTheme()
+    {
+        var light = App.IsSystemUsingLightTheme();
+        Resources["TrayMenuBackgroundBrush"] = new Media.SolidColorBrush(light
+            ? Media.Color.FromRgb(248, 250, 252)
+            : Media.Color.FromRgb(30, 30, 30));
+        Resources["TrayMenuHoverBrush"] = new Media.SolidColorBrush(light
+            ? Media.Color.FromRgb(229, 234, 242)
+            : Media.Color.FromRgb(48, 48, 48));
+        Resources["TrayMenuPressedBrush"] = new Media.SolidColorBrush(light
+            ? Media.Color.FromRgb(218, 226, 237)
+            : Media.Color.FromRgb(58, 58, 58));
+        Resources["TrayMenuTextBrush"] = new Media.SolidColorBrush(light
+            ? Media.Color.FromRgb(15, 23, 42)
+            : Media.Colors.White);
+        Resources["TrayMenuSeparatorBrush"] = new Media.SolidColorBrush(light
+            ? Media.Color.FromRgb(218, 226, 237)
+            : Media.Color.FromRgb(74, 74, 74));
     }
 
     public void ShowAtCursor()

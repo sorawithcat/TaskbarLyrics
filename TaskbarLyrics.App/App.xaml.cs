@@ -115,7 +115,7 @@ public partial class App : System.Windows.Application
             : trimmed;
     }
 
-    private static bool IsSystemUsingLightTheme()
+    internal static bool IsSystemUsingLightTheme()
     {
         const string personalizeKey = @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
         using var key = Registry.CurrentUser.OpenSubKey(personalizeKey);

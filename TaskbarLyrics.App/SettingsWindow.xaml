@@ -80,9 +80,16 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="40" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="8" />
         </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="8" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="8" />
+        </Grid.ColumnDefinitions>
 
         <Border Grid.Row="0"
+                Grid.ColumnSpan="3"
                 Background="#070E1D"
                 MouseLeftButtonDown="CaptionDragArea_MouseLeftButtonDown">
             <TextBlock Text="TaskbarLyrics - 设置"
@@ -93,6 +100,7 @@
         </Border>
 
         <StackPanel Grid.Row="0"
+                    Grid.ColumnSpan="3"
                     Orientation="Horizontal"
                     HorizontalAlignment="Right"
                     VerticalAlignment="Top">
@@ -116,6 +124,7 @@
 
         <wv2:WebView2 x:Name="SettingsWebView"
                       Grid.Row="1"
+                      Grid.Column="1"
                       DefaultBackgroundColor="#070E1D" />
     </Grid>
 </ui:FluentWindow>
