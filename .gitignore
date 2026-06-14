@@ -5,6 +5,7 @@
 **/[Oo]bj/
 build/
 build_verify/
+build_verify_single/
 publish/
 artifacts/
 
