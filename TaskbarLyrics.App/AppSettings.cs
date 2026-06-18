@@ -44,6 +44,11 @@ public sealed class AppSettings
 
     public bool ShowLyricsOnStartup { get; set; } = true;
 
+    /// <summary>
+    /// 开机自动启动（默认关闭，需用户手动在设置中开启）。
+    /// </summary>
+    public bool EnableAutoStart { get; set; } = false;
+
     public bool ShowLyricTranslation { get; set; } = false;
 
     public bool EnablePureMusicSpectrum { get; set; } = true;
