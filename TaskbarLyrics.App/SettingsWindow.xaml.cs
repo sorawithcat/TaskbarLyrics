@@ -203,6 +203,7 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
             HorizontalAnchor = _settings.HorizontalAnchor,
             XOffset = _settings.XOffset,
             YOffset = _settings.YOffset,
+            ForceAlwaysOnTop = _settings.ForceAlwaysOnTop,
             EnableSmtcTimelineMonitor = _settings.EnableSmtcTimelineMonitor
         };
     }
@@ -359,6 +360,9 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
                 break;
             case "showTextShadow":
                 _settings.ShowTextShadow = ReadBool(element, _settings.ShowTextShadow);
+                break;
+            case "forceAlwaysOnTop":
+                _settings.ForceAlwaysOnTop = ReadBool(element, _settings.ForceAlwaysOnTop);
                 break;
             case "enableSmtcTimelineMonitor":
                 _settings.EnableSmtcTimelineMonitor = ReadBool(element, _settings.EnableSmtcTimelineMonitor);
@@ -567,6 +571,7 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
         target.HorizontalAnchor = source.HorizontalAnchor;
         target.XOffset = source.XOffset;
         target.YOffset = source.YOffset;
+        target.ForceAlwaysOnTop = source.ForceAlwaysOnTop;
         target.EnableSmtcTimelineMonitor = source.EnableSmtcTimelineMonitor;
     }
 
@@ -759,6 +764,7 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
         public LyricsHorizontalAnchor HorizontalAnchor { get; set; }
         public double XOffset { get; set; }
         public double YOffset { get; set; }
+        public bool ForceAlwaysOnTop { get; set; }
         public bool EnableSmtcTimelineMonitor { get; set; }
     }
 
