@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _timer;
     private readonly DispatcherTimer _spectrumTimer;
     private readonly uint _taskbarCreatedMessage;
+    private LocalMediaCoverProvider? _localMediaCoverProvider;
     private Media.Color _primaryTextColor = Media.Colors.White;
     private Media.Color _secondaryTextColor = Media.Color.FromArgb(190, 255, 255, 255);
     private LyricSyncService _lyricSyncService;
@@ -106,6 +107,9 @@ public partial class MainWindow : Window
         }
 
         Width = Math.Clamp(settings.WindowWidth, 320, 1400);
+        _localMediaCoverProvider = settings.EnableLocalLyrics && settings.LocalMusicFolders.Count > 0
+            ? new LocalMediaCoverProvider(settings.LocalMusicFolders)
+            : null;
         _forceAlwaysOnTop = settings.ForceAlwaysOnTop;
         try
         {
@@ -450,7 +454,8 @@ public partial class MainWindow : Window
         if (isSameRequestedTrack && isCurrentTrackVisual)
         {
             // Proceed only if we previously had no cover for this track but now we have bytes.
-            if (_currentCoverDataUri != null || snapshot.CoverImageBytes == null)
+            if (_currentCoverDataUri != null ||
+                (snapshot.CoverImageBytes == null && _localMediaCoverProvider is null))
             {
                 return;
             }
@@ -472,6 +477,15 @@ public partial class MainWindow : Window
 
         if (snapshot.IsCoverLoading)
         {
+            return;
+        }
+
+        var localCoverBytes = _localMediaCoverProvider?.TryGetCover(snapshot.Track);
+        if (localCoverBytes is { Length: > 0 })
+        {
+            _currentCoverDataUri = BuildCoverDataUri(localCoverBytes);
+            _currentCoverVisualTrackId = trackId;
+            PushCoverToWebView();
             return;
         }
 

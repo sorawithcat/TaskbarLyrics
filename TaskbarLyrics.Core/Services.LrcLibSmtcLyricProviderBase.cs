@@ -60,13 +60,13 @@ public abstract class LrcLibSmtcLyricProviderBase : ILyricProvider
         var timed = ParseLrc(payload.Value.SyncedLyrics);
         if (timed.Count > 0)
         {
-            return new LyricDocument(timed);
+            return new LyricDocument(LyricLineNormalizer.MergeStandaloneSpeakerLabels(timed));
         }
 
         var plain = ParsePlainLyrics(payload.Value.PlainLyrics);
         if (plain.Count > 0)
         {
-            return new LyricDocument(plain);
+            return new LyricDocument(LyricLineNormalizer.MergeStandaloneSpeakerLabels(plain));
         }
 
         return null;

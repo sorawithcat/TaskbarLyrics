@@ -58,8 +58,9 @@ public abstract class LyricProviderBase : ILyricProvider
             EnsureDiskCacheLoaded();
             if (_diskCache!.TryGetValue(cacheKey, out var diskDoc))
             {
-                MemoryCache[cacheKey] = diskDoc;
-                return diskDoc;
+                var processedDiskDoc = ProcessDocument(diskDoc);
+                MemoryCache[cacheKey] = processedDiskDoc;
+                return processedDiskDoc;
             }
         }
 
@@ -89,6 +90,7 @@ public abstract class LyricProviderBase : ILyricProvider
         .ToList();
 
         lines = NormalizeOpeningLines(lines);
+        lines = LyricLineNormalizer.MergeStandaloneSpeakerLabels(lines);
 
         return new LyricDocument(EnsureSyllables(lines), doc.BestScore, doc.IsPureMusic);
     }

@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.IO;
+using System.Net.Http;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -18,6 +20,11 @@ namespace TaskbarLyrics.App;
 
 public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
 {
+    private const string RepositoryUrl = "https://github.com/ANYNC/TaskbarLyrics";
+    private const string ReleasesUrl = "https://github.com/ANYNC/TaskbarLyrics/releases/latest";
+    private const string LatestReleaseApiUrl = "https://api.github.com/repos/ANYNC/TaskbarLyrics/releases/latest";
+    private static readonly HttpClient UpdateHttpClient = new();
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -156,6 +163,14 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
             case "pickColor":
                 await PickForegroundColorAsync();
                 break;
+            case "checkForUpdates":
+                await CheckForUpdatesAsync();
+                break;
+            case "openExternalLink":
+                OpenExternalLink(message.Value.HasValue
+                    ? ReadString(message.Value.Value, RepositoryUrl)
+                    : RepositoryUrl);
+                break;
         }
     }
 
@@ -207,7 +222,9 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
             XOffset = _settings.XOffset,
             YOffset = _settings.YOffset,
             ForceAlwaysOnTop = _settings.ForceAlwaysOnTop,
-            EnableSmtcTimelineMonitor = _settings.EnableSmtcTimelineMonitor
+            EnableSmtcTimelineMonitor = _settings.EnableSmtcTimelineMonitor,
+            AppVersion = GetAppVersion(),
+            RepositoryUrl = RepositoryUrl
         };
     }
 
@@ -468,6 +485,109 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
     {
         LyricProviderBase.ClearCache();
         GenericSmtcLyricProvider.ClearCache();
+    }
+
+    private async Task CheckForUpdatesAsync()
+    {
+        await PushUpdateStatusToWebAsync(new UpdateStatusPayload
+        {
+            State = "checking",
+            Message = "正在检查更新..."
+        });
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, LatestReleaseApiUrl);
+            request.Headers.UserAgent.ParseAdd("TaskbarLyrics");
+            using var response = await UpdateHttpClient.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            var release = await JsonSerializer.DeserializeAsync<GitHubRelease>(stream);
+            var latestVersion = NormalizeVersionTag(release?.TagName);
+            var currentVersion = NormalizeVersionTag(GetAppVersion());
+
+            if (string.IsNullOrWhiteSpace(latestVersion))
+            {
+                await PushUpdateStatusToWebAsync(new UpdateStatusPayload
+                {
+                    State = "error",
+                    Message = "没有读取到最新版本信息。"
+                });
+                return;
+            }
+
+            var hasUpdate = IsVersionGreater(latestVersion, currentVersion);
+            await PushUpdateStatusToWebAsync(new UpdateStatusPayload
+            {
+                State = hasUpdate ? "available" : "latest",
+                Message = hasUpdate
+                    ? $"发现新版本 {release?.TagName ?? latestVersion}，当前版本 {GetAppVersion()}。"
+                    : $"当前已是最新版本：{GetAppVersion()}。",
+                Version = release?.TagName ?? latestVersion,
+                Url = string.IsNullOrWhiteSpace(release?.HtmlUrl) ? ReleasesUrl : release.HtmlUrl
+            });
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or NotSupportedException)
+        {
+            await PushUpdateStatusToWebAsync(new UpdateStatusPayload
+            {
+                State = "error",
+                Message = "检查更新失败，请稍后重试。"
+            });
+        }
+    }
+
+    private async Task PushUpdateStatusToWebAsync(UpdateStatusPayload payload)
+    {
+        if (!_isWebReady || SettingsWebView.CoreWebView2 is null)
+        {
+            return;
+        }
+
+        var json = JsonSerializer.Serialize(payload, JsonOptions);
+        await SettingsWebView.ExecuteScriptAsync($"window.settingsApp?.setUpdateStatus({json});");
+    }
+
+    private static void OpenExternalLink(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+            uri.Scheme is not ("https" or "http"))
+        {
+            return;
+        }
+
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri.AbsoluteUri)
+        {
+            UseShellExecute = true
+        });
+    }
+
+    private static string GetAppVersion()
+    {
+        var version = Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+        return (version ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0")
+            .Split('+')[0];
+    }
+
+    private static string NormalizeVersionTag(string? version)
+    {
+        return string.IsNullOrWhiteSpace(version)
+            ? ""
+            : version.Trim().TrimStart('v', 'V');
+    }
+
+    private static bool IsVersionGreater(string latestVersion, string currentVersion)
+    {
+        if (Version.TryParse(latestVersion, out var latest) &&
+            Version.TryParse(currentVersion, out var current))
+        {
+            return latest > current;
+        }
+
+        return string.Compare(latestVersion, currentVersion, StringComparison.OrdinalIgnoreCase) > 0;
     }
 
     private void SaveSettings()
@@ -817,6 +937,28 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
         public double YOffset { get; set; }
         public bool ForceAlwaysOnTop { get; set; }
         public bool EnableSmtcTimelineMonitor { get; set; }
+        public string AppVersion { get; set; } = "";
+        public string RepositoryUrl { get; set; } = "";
+    }
+
+    private sealed class UpdateStatusPayload
+    {
+        public string State { get; set; } = "";
+
+        public string Message { get; set; } = "";
+
+        public string Version { get; set; } = "";
+
+        public string Url { get; set; } = "";
+    }
+
+    private sealed class GitHubRelease
+    {
+        [JsonPropertyName("tag_name")]
+        public string? TagName { get; set; }
+
+        [JsonPropertyName("html_url")]
+        public string? HtmlUrl { get; set; }
     }
 
     private sealed class FontOption

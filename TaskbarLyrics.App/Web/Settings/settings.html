@@ -19,6 +19,7 @@
         <button class="nav-item" data-target="appearance"><span>◌</span><b>外观</b></button>
         <button class="nav-item" data-target="layout"><span>▦</span><b>布局</b></button>
         <button class="nav-item" data-target="debug"><span>♢</span><b>调试</b></button>
+        <button class="nav-item" data-target="about"><span>i</span><b>关于</b></button>
       </nav>
       <button id="sidebarToggle" class="collapse" title="收缩侧边栏">‹</button>
     </aside>
@@ -92,6 +93,31 @@
             <label class="row"><span><strong>SMTC 时间轴监视器</strong><small>用于观察播放器时间轴数据，排查同步问题。</small></span><input data-key="enableSmtcTimelineMonitor" type="checkbox"></label>
             <div class="row"><span><strong>频谱调试</strong><small>打开临时滑块面板，实时调整频谱响应参数。</small></span><button id="spectrumTuningButton" class="primary">打开调试</button></div>
             <div class="row"><span><strong>歌词缓存</strong><small>清除后首次重新匹配会稍慢。</small></span><button id="clearCacheButton" class="danger">清除缓存</button></div>
+          </div>
+        </section>
+
+        <section id="about" class="card reveal">
+          <h2>关于</h2>
+          <div class="about-panel">
+            <div class="about-hero">
+              <div class="about-logo">●</div>
+              <strong>TaskbarLyrics</strong>
+              <p>一个开源、<span class="crossed-word">轻量</span>、现代化的任务栏歌词工具。</p>
+              <small id="appVersion">当前版本 --</small>
+            </div>
+            <div class="about-grid">
+              <div><span>开源仓库</span><button id="repositoryButton" class="link-button" type="button">GitHub</button></div>
+              <div><span>开源协议</span><strong>MIT License</strong></div>
+              <div><span>界面技术</span><strong>WPF + WebView2</strong></div>
+              <div><span>主要依赖</span><strong>WPF-UI / WebView2 / Lyricify</strong></div>
+            </div>
+            <div class="update-box">
+              <small id="updateStatus">从 GitHub Releases 检查是否有新版本。</small>
+              <div class="update-actions">
+                <button id="checkUpdateButton" class="primary wide" type="button">检查更新</button>
+                <button id="openReleaseButton" class="secondary wide hidden" type="button">打开发布页</button>
+              </div>
+            </div>
           </div>
         </section>
       </div>

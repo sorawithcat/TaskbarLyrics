@@ -20,6 +20,7 @@ const presetForegroundColors = {
 let state = null;
 let fonts = [];
 let draggedSource = null;
+let updateReleaseUrl = "";
 
 const bridge = {
   post(message) {
@@ -56,6 +57,7 @@ function setState(nextState, fontList = fonts) {
   renderFonts();
   renderControls();
   renderOrder();
+  renderAbout();
 }
 
 function renderFonts() {
@@ -143,6 +145,33 @@ function renderOrder() {
     item.addEventListener("dragend", onOrderDragEnd);
     order.appendChild(item);
   }
+}
+
+function renderAbout() {
+  if (!state) return;
+
+  const version = document.getElementById("appVersion");
+  if (version) version.textContent = `当前版本 ${state.appVersion || "--"}`;
+}
+
+function setUpdateStatus(payload) {
+  const status = document.getElementById("updateStatus");
+  const checkButton = document.getElementById("checkUpdateButton");
+  const releaseButton = document.getElementById("openReleaseButton");
+  const stateName = payload?.state || "";
+
+  if (status) {
+    status.textContent = payload?.message || "从 GitHub Releases 检查是否有新版本。";
+    status.dataset.state = stateName;
+  }
+
+  if (checkButton) {
+    checkButton.disabled = stateName === "checking";
+    checkButton.textContent = stateName === "checking" ? "检查中" : "检查更新";
+  }
+
+  updateReleaseUrl = payload?.url || "";
+  releaseButton?.classList.toggle("hidden", stateName !== "available");
 }
 
 function onOrderDragStart(event) {
@@ -246,6 +275,20 @@ function setupEvents() {
     bridge.post({ type: "openSpectrumTuning" });
   });
 
+  document.getElementById("checkUpdateButton")?.addEventListener("click", () => {
+    bridge.post({ type: "checkForUpdates" });
+  });
+
+  document.getElementById("openReleaseButton")?.addEventListener("click", () => {
+    if (!updateReleaseUrl) return;
+    bridge.post({ type: "openExternalLink", value: updateReleaseUrl });
+  });
+
+  document.getElementById("repositoryButton")?.addEventListener("click", () => {
+    if (!state?.repositoryUrl) return;
+    bridge.post({ type: "openExternalLink", value: state.repositoryUrl });
+  });
+
   document.getElementById("sidebarToggle")?.addEventListener("click", () => {
     const windowElement = document.querySelector(".window");
     const toggle = document.getElementById("sidebarToggle");
@@ -292,18 +335,23 @@ function parseInputValue(element) {
 }
 
 function updateActiveNav() {
+  const content = document.getElementById("content");
   const sections = [...document.querySelectorAll("section.card")];
-  const active = sections
+  if (sections.length === 0) return;
+
+  const active = content && content.scrollTop + content.clientHeight >= content.scrollHeight - 8
+    ? sections[sections.length - 1]
+    : sections
     .map((section) => ({ id: section.id, distance: Math.abs(section.getBoundingClientRect().top - 110) }))
     .sort((a, b) => a.distance - b.distance)[0];
   if (!active) return;
 
   document.querySelectorAll(".nav-item").forEach((item) => {
-    item.classList.toggle("active", item.dataset.target === active.id);
+    item.classList.toggle("active", item.dataset.target === (active.id ?? active));
   });
 }
 
-window.settingsApp = { setState };
+window.settingsApp = { setState, setUpdateStatus };
 
 setupEvents();
 bridge.post({ type: "ready" });

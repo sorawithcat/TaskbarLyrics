@@ -5,7 +5,7 @@ namespace TaskbarLyrics.App;
 
 public sealed class SystemAudioSpectrumService : IDisposable
 {
-    private const int BarCount = 24;
+    private const int BarCount = 21;
     private const int RingBufferSize = 8192;
     private const int ClsctxAll = 23;
     private const int AudclntSharemodeShared = 0;
