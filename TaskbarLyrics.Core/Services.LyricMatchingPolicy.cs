@@ -9,6 +9,7 @@ public static class LyricMatchingPolicy
     public const int FallbackImmediateExitScore = 95;
 
     public static readonly TimeSpan FallbackSoftWait = TimeSpan.FromMilliseconds(800);
+    public static readonly TimeSpan LocalProviderTimeout = TimeSpan.FromSeconds(2);
     public static readonly TimeSpan OfficialSourceTimeout = TimeSpan.FromSeconds(10);
     public static readonly TimeSpan FallbackProviderTimeout = TimeSpan.FromSeconds(5);
     public static readonly TimeSpan QqMusicUnreliableDurationThreshold = TimeSpan.FromSeconds(61);
@@ -16,6 +17,7 @@ public static class LyricMatchingPolicy
     public static readonly IReadOnlyDictionary<string, int> SourceQualityWeights =
         new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
         {
+            ["Local"] = 10,
             ["QQMusic"] = 6,
             ["Netease"] = 3,
             ["Kugou"] = 2,

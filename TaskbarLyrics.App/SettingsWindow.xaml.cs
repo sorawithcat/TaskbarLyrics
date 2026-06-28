@@ -187,6 +187,8 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
             EnableQQMusic = _settings.EnableQQMusic,
             EnableKugou = _settings.EnableKugou,
             EnableSpotify = _settings.EnableSpotify,
+            EnableLocalLyrics = _settings.EnableLocalLyrics,
+            LocalMusicFolders = NormalizeLocalMusicFolders(_settings.LocalMusicFolders),
             ShowLyricsOnStartup = _settings.ShowLyricsOnStartup,
             StartWithWindows = _settings.StartWithWindows,
             ShowLyricTranslation = _settings.ShowLyricTranslation,
@@ -344,6 +346,12 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
             case "enableSpotify":
                 _settings.EnableSpotify = ReadBool(element, _settings.EnableSpotify);
                 break;
+            case "enableLocalLyrics":
+                _settings.EnableLocalLyrics = ReadBool(element, _settings.EnableLocalLyrics);
+                break;
+            case "localMusicFolders":
+                _settings.LocalMusicFolders = NormalizeLocalMusicFolders(ReadStringList(element));
+                break;
             case "showLyricsOnStartup":
                 _settings.ShowLyricsOnStartup = ReadBool(element, _settings.ShowLyricsOnStartup);
                 break;
@@ -499,6 +507,37 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
             : fallback;
     }
 
+    private static List<string> ReadStringList(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            return element.EnumerateArray()
+                .Select(item => item.ValueKind == JsonValueKind.String ? item.GetString() : null)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!)
+                .ToList();
+        }
+
+        if (element.ValueKind == JsonValueKind.String)
+        {
+            return element.GetString()?
+                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .ToList() ?? new List<string>();
+        }
+
+        return new List<string>();
+    }
+
+    private static List<string> NormalizeLocalMusicFolders(IEnumerable<string>? folders)
+    {
+        return (folders ?? Enumerable.Empty<string>())
+            .Where(folder => !string.IsNullOrWhiteSpace(folder))
+            .Select(folder => folder.Trim().Trim('"'))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     private static string NormalizeColor(string color)
     {
         if (string.IsNullOrWhiteSpace(color))
@@ -561,6 +600,8 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
         target.EnableQQMusic = source.EnableQQMusic;
         target.EnableKugou = source.EnableKugou;
         target.EnableSpotify = source.EnableSpotify;
+        target.EnableLocalLyrics = source.EnableLocalLyrics;
+        target.LocalMusicFolders = NormalizeLocalMusicFolders(source.LocalMusicFolders);
         target.ShowLyricsOnStartup = source.ShowLyricsOnStartup;
         target.StartWithWindows = source.StartWithWindows;
         target.ShowLyricTranslation = source.ShowLyricTranslation;
@@ -755,6 +796,8 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
         public bool EnableQQMusic { get; set; }
         public bool EnableKugou { get; set; }
         public bool EnableSpotify { get; set; }
+        public bool EnableLocalLyrics { get; set; }
+        public List<string> LocalMusicFolders { get; set; } = new();
         public bool ShowLyricsOnStartup { get; set; }
         public bool StartWithWindows { get; set; }
         public bool ShowLyricTranslation { get; set; }

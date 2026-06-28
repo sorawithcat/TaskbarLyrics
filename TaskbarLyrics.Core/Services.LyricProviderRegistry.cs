@@ -66,6 +66,26 @@ public sealed class LyricProviderRegistry : ILyricProviderRegistry
                 });
         }
 
+        var localProvider = FindProviders("Local").FirstOrDefault();
+        if (localProvider is not null)
+        {
+            Log.Info($"Local lyric source enabled, trying before player official source. Timeout={LyricMatchingPolicy.LocalProviderTimeout.TotalSeconds:F0}s");
+            var localResult = await RunProviderAsync(
+                localProvider,
+                overriddenTrack,
+                LyricMatchingPolicy.LocalProviderTimeout,
+                cancellationToken);
+            if (localResult.Document is not null)
+            {
+                stopwatch.Stop();
+                Log.Info($"Local lyric source returned a valid document. Total elapsed: {stopwatch.ElapsedMilliseconds} ms");
+                return BuildResults(new Dictionary<ILyricProvider, LyricDocument?>
+                {
+                    [localProvider] = ApplyQualityWeight(localProvider, localResult.Document)
+                });
+            }
+        }
+
         if (LyricSourceRoutingPolicy.TryGetOfficialProvider(track.SourceApp, out var officialSource))
         {
             var officialProvider = FindProviders(officialSource).FirstOrDefault();

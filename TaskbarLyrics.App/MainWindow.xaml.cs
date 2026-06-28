@@ -165,6 +165,11 @@ public partial class MainWindow : Window
             new GenericSmtcLyricProvider()
         };
 
+        if (settings?.EnableLocalLyrics == true && settings.LocalMusicFolders.Count > 0)
+        {
+            providers.Add(new LocalLyricProvider(settings.LocalMusicFolders));
+        }
+
         if (settings?.EnableNetease != false)
         {
             providers.Add(new LyricifyLyricProvider("Netease", Lyricify.Lyrics.Searchers.Searchers.Netease));

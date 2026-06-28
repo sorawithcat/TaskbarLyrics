@@ -58,7 +58,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -481,6 +482,7 @@ input[type="checkbox"]:checked::after {
 }
 
 select,
+textarea,
 .stepper,
 .color-control {
   width: 280px;
@@ -513,11 +515,27 @@ select {
   outline: 0;
 }
 
+textarea {
+  height: auto;
+  min-height: 86px;
+  padding: 10px 12px;
+  outline: 0;
+  resize: vertical;
+  line-height: 1.45;
+}
+
 select:focus,
+textarea:focus,
 .stepper:focus-within,
 .color-control:focus-within {
   border-color: var(--focus);
   transform: translateY(-1px);
+}
+
+.local-folders-row {
+  align-items: start;
+  padding-top: 12px;
+  padding-bottom: 12px;
 }
 
 .stepper {

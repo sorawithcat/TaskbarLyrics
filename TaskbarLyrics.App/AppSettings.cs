@@ -42,6 +42,10 @@ public sealed class AppSettings
 
     public bool EnableSpotify { get; set; } = true;
 
+    public bool EnableLocalLyrics { get; set; } = true;
+
+    public List<string> LocalMusicFolders { get; set; } = new();
+
     public bool ShowLyricsOnStartup { get; set; } = true;
 
     public bool StartWithWindows { get; set; } = false;
@@ -85,6 +89,7 @@ public sealed class AppSettings
     {
         var cloned = (AppSettings)MemberwiseClone();
         cloned.SourceRecognitionOrder = SourceRecognitionOrder.ToList();
+        cloned.LocalMusicFolders = LocalMusicFolders.ToList();
         return cloned;
     }
 }

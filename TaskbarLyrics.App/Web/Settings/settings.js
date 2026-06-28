@@ -79,6 +79,8 @@ function renderControls() {
 
     if (input.type === "checkbox") {
       input.checked = Boolean(state[key]);
+    } else if (input.tagName === "TEXTAREA" && Array.isArray(state[key])) {
+      input.value = state[key].join("\n");
     } else {
       input.value = state[key] ?? "";
     }
@@ -186,7 +188,7 @@ function formatNumber(value, decimals) {
 }
 
 function setupEvents() {
-  document.querySelectorAll("input, select").forEach((element) => {
+  document.querySelectorAll("input, select, textarea").forEach((element) => {
     element.addEventListener("change", () => {
       const key = element.dataset.key;
       if (!key) return;
@@ -276,6 +278,13 @@ function setupEvents() {
 
 function parseInputValue(element) {
   const key = element.dataset.key;
+  if (key === "localMusicFolders") {
+    return element.value
+      .split(/\r?\n/)
+      .map((value) => value.trim().replace(/^"|"$/g, ""))
+      .filter(Boolean);
+  }
+
   if (["fontSize", "backgroundOpacity", "windowWidth", "xOffset", "yOffset"].includes(key)) {
     return Number(element.value);
   }
