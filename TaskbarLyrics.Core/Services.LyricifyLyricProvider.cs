@@ -184,6 +184,7 @@ public sealed class LyricifyLyricProvider : LyricProviderBase
                 var response = await ProviderHelper.NeteaseApi.GetLyric(neteaseResult.Id);
                 rawLyric = response?.Lrc?.Lyric;
                 rawTranslation = response?.Tlyric?.Lyric;
+                Log.Debug($"LyricifyLyricProvider [Netease] GetLyric 返回: Id='{neteaseResult.Id}', LyricLen={GetTextLength(rawLyric)}, TransLen={GetTextLength(rawTranslation)}");
             }
             else if (_searcherType == Lyricify.Lyrics.Searchers.Searchers.Kugou && searchResult is KugouSearchResult kugouResult)
             {
@@ -235,6 +236,7 @@ public sealed class LyricifyLyricProvider : LyricProviderBase
 
                         rawLyric = lyricBuilder.ToString();
                         rawTranslation = translationBuilder.ToString();
+                        Log.Debug($"LyricifyLyricProvider [Kugou] KRC 返回有效歌词: Hash='{kugouResult.Hash}', CandidateId='{candidate.Id}', LyricLen={GetTextLength(rawLyric)}, TransLen={GetTextLength(rawTranslation)}");
                         break;
                     }
                     catch (Exception ex)
@@ -261,6 +263,8 @@ public sealed class LyricifyLyricProvider : LyricProviderBase
             Log.Info($"LyricifyLyricProvider [{SourceApp}] 获取到的原始歌词文本为空");
             return null;
         }
+
+        Log.Debug($"LyricifyLyricProvider [{SourceApp}] 准备解析原始歌词: LyricLen={GetTextLength(rawLyric)}, TransLen={GetTextLength(rawTranslation)}");
 
         // 5. 解析 LRC 歌词行
         var lines = ParseRawLyrics(rawLyric);

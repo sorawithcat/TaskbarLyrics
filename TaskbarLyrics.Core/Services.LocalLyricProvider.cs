@@ -44,7 +44,8 @@ public sealed class LocalLyricProvider : ILyricProvider
     private static readonly TimeSpan OpeningCreditWindow = TimeSpan.FromSeconds(5);
     private readonly IReadOnlyList<string> _rootFolders;
     private readonly object _indexLock = new();
-    private IReadOnlyList<LocalLyricEntry>? _index;
+    private readonly List<LocalLyricEntry> _index = new();
+    private readonly Task _indexTask;
 
     static LocalLyricProvider()
     {
@@ -58,6 +59,7 @@ public sealed class LocalLyricProvider : ILyricProvider
             .Select(path => path.Trim().Trim('"'))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+        _indexTask = Task.Run(() => BuildIndexAsync(CancellationToken.None));
     }
 
     public string SourceApp => "Local";
@@ -71,8 +73,12 @@ public sealed class LocalLyricProvider : ILyricProvider
             return Task.FromResult<LyricDocument?>(null);
         }
 
-        cancellationToken.ThrowIfCancellationRequested();
-        var index = EnsureIndex(cancellationToken);
+        var index = SnapshotIndex();
+        if (index.Count == 0)
+        {
+            return Task.FromResult<LyricDocument?>(null);
+        }
+
         var best = FindBestMatch(track, index);
         if (best is null)
         {
@@ -90,21 +96,20 @@ public sealed class LocalLyricProvider : ILyricProvider
         return Task.FromResult<LyricDocument?>(new LyricDocument(EnsureSyllables(lines), best.Score));
     }
 
-    private IReadOnlyList<LocalLyricEntry> EnsureIndex(CancellationToken cancellationToken)
+    private IReadOnlyList<LocalLyricEntry> SnapshotIndex()
     {
-        if (_index is not null)
-        {
-            return _index;
-        }
-
         lock (_indexLock)
         {
-            if (_index is not null)
-            {
-                return _index;
-            }
+            return _index.ToList();
+        }
+    }
 
-            var entries = new Dictionary<string, LocalLyricEntry>(StringComparer.OrdinalIgnoreCase);
+    private async Task BuildIndexAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var pending = new List<LocalLyricEntry>();
             foreach (var folder in _rootFolders)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -118,7 +123,7 @@ public sealed class LocalLyricProvider : ILyricProvider
                     var extension = Path.GetExtension(file);
                     if (LyricExtensions.Contains(extension))
                     {
-                        TryAddEntry(entries, file);
+                        TryAddEntry(seen, pending, file, readEmbeddedMetadata: false);
                         continue;
                     }
 
@@ -127,28 +132,55 @@ public sealed class LocalLyricProvider : ILyricProvider
                         continue;
                     }
 
-                    TryAddEntry(entries, file);
+                    TryAddEntry(seen, pending, file, readEmbeddedMetadata: false);
 
                     foreach (var lyricExtension in LyricExtensions)
                     {
                         var lyricPath = Path.ChangeExtension(file, lyricExtension);
                         if (File.Exists(lyricPath))
                         {
-                            TryAddEntry(entries, lyricPath);
+                            TryAddEntry(seen, pending, lyricPath, readEmbeddedMetadata: false);
                         }
+                    }
+
+                    if (pending.Count >= 200)
+                    {
+                        FlushPendingIndexEntries(pending);
+                        await Task.Delay(20, cancellationToken).ConfigureAwait(false);
                     }
                 }
             }
 
-            _index = entries.Values.ToList();
-            Log.Info($"Local lyrics index built. Folders={_rootFolders.Count}, Entries={_index.Count}");
-            return _index;
+            FlushPendingIndexEntries(pending);
+            Log.Info($"Local lyrics background index built. Folders={_rootFolders.Count}, Entries={seen.Count}");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Local lyrics background index failed: {ex.Message}");
         }
     }
 
-    private static void TryAddEntry(IDictionary<string, LocalLyricEntry> entries, string lyricPath)
+    private void FlushPendingIndexEntries(List<LocalLyricEntry> pending)
     {
-        if (entries.ContainsKey(lyricPath))
+        if (pending.Count == 0)
+        {
+            return;
+        }
+
+        lock (_indexLock)
+        {
+            _index.AddRange(pending);
+        }
+
+        pending.Clear();
+    }
+
+    private static void TryAddEntry(ISet<string> seen, ICollection<LocalLyricEntry> entries, string lyricPath, bool readEmbeddedMetadata)
+    {
+        if (!seen.Add(lyricPath))
         {
             return;
         }
@@ -160,14 +192,14 @@ public sealed class LocalLyricProvider : ILyricProvider
         }
 
         var (artist, title) = SplitArtistTitle(stem);
-        if (AudioExtensions.Contains(Path.GetExtension(lyricPath)))
+        if (readEmbeddedMetadata && AudioExtensions.Contains(Path.GetExtension(lyricPath)))
         {
             var embeddedMetadata = TryExtractEmbeddedMetadata(lyricPath);
             title = string.IsNullOrWhiteSpace(embeddedMetadata.Title) ? title : embeddedMetadata.Title;
             artist = MergeArtists(artist, embeddedMetadata.Artist, embeddedMetadata.AlbumArtist);
         }
 
-        entries[lyricPath] = new LocalLyricEntry(lyricPath, stem, artist, title);
+        entries.Add(new LocalLyricEntry(lyricPath, stem, artist, title));
     }
 
     private static (string? Title, string? Artist, string? AlbumArtist) TryExtractEmbeddedMetadata(string path)
@@ -240,9 +272,15 @@ public sealed class LocalLyricProvider : ILyricProvider
 
     private static LocalLyricMatch? FindBestMatch(TrackInfo track, IReadOnlyList<LocalLyricEntry> entries)
     {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         LocalLyricMatch? best = null;
         foreach (var entry in entries)
         {
+            if (stopwatch.ElapsedMilliseconds > 150)
+            {
+                break;
+            }
+
             var score = ScoreEntry(track, entry);
             if (score < LyricMatchingPolicy.MinimumAcceptedMatchScore)
             {
@@ -282,6 +320,11 @@ public sealed class LocalLyricProvider : ILyricProvider
         if (titleHit && artistHit)
         {
             return Math.Max(score, 88);
+        }
+
+        if (titleHit)
+        {
+            return Math.Max(score, 82);
         }
 
         return score;

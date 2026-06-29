@@ -1,6 +1,4 @@
 using System.IO;
-using System.IO.Pipes;
-using System.Threading;
 using System.Windows;
 using Microsoft.Win32;
 
@@ -8,15 +6,11 @@ namespace TaskbarLyrics.App;
 
 public partial class App : System.Windows.Application
 {
-    private const string SingleInstanceMutexName = @"Local\ANYNC.TaskbarLyrics.SingleInstance";
-    private const string ActivationPipeName = "ANYNC.TaskbarLyrics.Activation";
     private SettingsStore? _settingsStore;
     private TrayService? _trayService;
     private SettingsWindow? _settingsWindow;
     private SpectrumTuningWindow? _spectrumTuningWindow;
     private LyricsWindowHost? _lyricsWindowHost;
-    private Mutex? _singleInstanceMutex;
-    private bool _ownsSingleInstanceMutex;
     private CancellationTokenSource? _activationServerCancellation;
     private SpectrumTuningSettings _spectrumTuningSettings = SpectrumTuningSettings.CreateDefault();
 
@@ -27,12 +21,9 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
-        _singleInstanceMutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out var isFirstInstance);
-        _ownsSingleInstanceMutex = isFirstInstance;
-        if (!isFirstInstance)
+        if (!SingleInstanceService.EnsureCurrentInstance())
         {
-            SignalRunningInstanceAsync().GetAwaiter().GetResult();
-            Shutdown();
+            Environment.Exit(0);
             return;
         }
 
@@ -78,12 +69,7 @@ public partial class App : System.Windows.Application
         _spectrumTuningWindow?.Close();
         _lyricsWindowHost?.Dispose();
         _trayService?.Dispose();
-        if (_ownsSingleInstanceMutex)
-        {
-            _singleInstanceMutex?.ReleaseMutex();
-        }
-
-        _singleInstanceMutex?.Dispose();
+        SingleInstanceService.Release();
         base.OnExit(e);
     }
 
@@ -221,53 +207,9 @@ public partial class App : System.Windows.Application
     private void StartActivationServer()
     {
         _activationServerCancellation = new CancellationTokenSource();
-        _ = Task.Run(() => ListenForActivationAsync(_activationServerCancellation.Token));
-    }
-
-    private async Task ListenForActivationAsync(CancellationToken cancellationToken)
-    {
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            try
-            {
-                await using var server = new NamedPipeServerStream(
-                    ActivationPipeName,
-                    PipeDirection.In,
-                    maxNumberOfServerInstances: 1,
-                    PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous);
-
-                await server.WaitForConnectionAsync(cancellationToken);
-                await Dispatcher.InvokeAsync(OpenSettingsWindow);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (IOException)
-            {
-            }
-        }
-    }
-
-    private static async Task SignalRunningInstanceAsync()
-    {
-        try
-        {
-            await using var client = new NamedPipeClientStream(
-                ".",
-                ActivationPipeName,
-                PipeDirection.Out,
-                PipeOptions.Asynchronous);
-
-            await client.ConnectAsync(500);
-        }
-        catch (TimeoutException)
-        {
-        }
-        catch (IOException)
-        {
-        }
+        _ = Task.Run(() => SingleInstanceService.ListenForActivationAsync(
+            () => Dispatcher.InvokeAsync(OpenSettingsWindow).Task,
+            _activationServerCancellation.Token));
     }
 
     private void SettingsWindow_Closed(object? sender, EventArgs e)

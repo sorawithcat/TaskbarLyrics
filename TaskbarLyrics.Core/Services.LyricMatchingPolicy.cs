@@ -5,6 +5,8 @@ namespace TaskbarLyrics.Core.Services;
 public static class LyricMatchingPolicy
 {
     public const int MinimumAcceptedMatchScore = 70;
+    public const int OfficialImmediateAcceptScore = 90;
+    public const int FallbackOverrideMargin = 8;
     public const int FallbackSoftWaitScore = 85;
     public const int FallbackImmediateExitScore = 95;
 

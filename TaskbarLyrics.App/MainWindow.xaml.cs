@@ -39,6 +39,8 @@ public partial class MainWindow : Window
     private string? _currentCoverDataUri;
     private string _currentCoverFallbackText = "N";
     private string _currentCoverFallbackColorCss = "rgba(67, 160, 71, 1)";
+    private string? _lastLocalCoverLookupTrackId;
+    private DateTimeOffset _nextLocalCoverLookupUtc;
     private bool _enableSmtcTimelineMonitor;
     private bool _enablePureMusicSpectrum = true;
     private SmtcTimelineMonitorWindow? _smtcTimelineMonitorWindow;
@@ -480,7 +482,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var localCoverBytes = _localMediaCoverProvider?.TryGetCover(snapshot.Track);
+        var localCoverBytes = TryGetThrottledLocalCover(snapshot.Track, trackId);
         if (localCoverBytes is { Length: > 0 })
         {
             _currentCoverDataUri = BuildCoverDataUri(localCoverBytes);
@@ -492,6 +494,31 @@ public partial class MainWindow : Window
         _currentCoverDataUri = null;
         _currentCoverVisualTrackId = trackId;
         PushCoverToWebView();
+    }
+
+    private byte[]? TryGetThrottledLocalCover(TrackInfo? track, string? trackId)
+    {
+        if (_localMediaCoverProvider is null || track is null)
+        {
+            return null;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        if (string.Equals(trackId, _lastLocalCoverLookupTrackId, StringComparison.Ordinal) &&
+            now < _nextLocalCoverLookupUtc)
+        {
+            return null;
+        }
+
+        _lastLocalCoverLookupTrackId = trackId;
+        _nextLocalCoverLookupUtc = now.AddSeconds(5);
+        var cover = _localMediaCoverProvider.TryGetCover(track);
+        if (cover is { Length: > 0 })
+        {
+            _nextLocalCoverLookupUtc = DateTimeOffset.MaxValue;
+        }
+
+        return cover;
     }
 
     private static (string Text, Media.Color Color) GetCoverFallback(string sourceApp)

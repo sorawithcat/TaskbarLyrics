@@ -27,7 +27,8 @@ internal sealed class LocalMediaCoverProvider
     private readonly IReadOnlyList<string> _rootFolders;
     private readonly object _indexLock = new();
     private readonly Dictionary<string, byte[]?> _coverCache = new(StringComparer.OrdinalIgnoreCase);
-    private IReadOnlyList<LocalMediaEntry>? _index;
+    private readonly List<LocalMediaEntry> _index = new();
+    private readonly Task _indexTask;
 
     static LocalMediaCoverProvider()
     {
@@ -41,6 +42,7 @@ internal sealed class LocalMediaCoverProvider
             .Select(path => path.Trim().Trim('"'))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+        _indexTask = Task.Run(() => BuildIndexAsync(CancellationToken.None));
     }
 
     public byte[]? TryGetCover(TrackInfo? track, CancellationToken cancellationToken = default)
@@ -53,7 +55,13 @@ internal sealed class LocalMediaCoverProvider
             return null;
         }
 
-        var entry = FindBestMatch(track, EnsureIndex(cancellationToken));
+        var index = SnapshotIndex();
+        if (index.Count == 0)
+        {
+            return null;
+        }
+
+        var entry = FindBestMatch(track, index);
         if (entry is null)
         {
             return null;
@@ -76,21 +84,19 @@ internal sealed class LocalMediaCoverProvider
         return cover;
     }
 
-    private IReadOnlyList<LocalMediaEntry> EnsureIndex(CancellationToken cancellationToken)
+    private IReadOnlyList<LocalMediaEntry> SnapshotIndex()
     {
-        if (_index is not null)
-        {
-            return _index;
-        }
-
         lock (_indexLock)
         {
-            if (_index is not null)
-            {
-                return _index;
-            }
+            return _index.ToList();
+        }
+    }
 
-            var entries = new Dictionary<string, LocalMediaEntry>(StringComparer.OrdinalIgnoreCase);
+    private async Task BuildIndexAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var pending = new List<LocalMediaEntry>();
             foreach (var folder in _rootFolders)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -107,31 +113,59 @@ internal sealed class LocalMediaCoverProvider
                     }
 
                     var entry = CreateEntry(file);
-                    entries[file] = entry;
+                    pending.Add(entry);
+                    if (pending.Count >= 200)
+                    {
+                        FlushPendingIndexEntries(pending);
+                        await Task.Delay(20, cancellationToken).ConfigureAwait(false);
+                    }
                 }
             }
 
-            _index = entries.Values.ToList();
-            return _index;
+            FlushPendingIndexEntries(pending);
         }
+        catch (OperationCanceledException)
+        {
+        }
+        catch
+        {
+        }
+    }
+
+    private void FlushPendingIndexEntries(List<LocalMediaEntry> pending)
+    {
+        if (pending.Count == 0)
+        {
+            return;
+        }
+
+        lock (_indexLock)
+        {
+            _index.AddRange(pending);
+        }
+
+        pending.Clear();
     }
 
     private static LocalMediaEntry CreateEntry(string path)
     {
         var stem = TrackNumberPrefixRegex.Replace(Path.GetFileNameWithoutExtension(path), string.Empty).Trim();
         var (fileArtist, fileTitle) = SplitArtistTitle(stem);
-        var metadata = TryExtractEmbeddedMetadata(path);
-        var title = string.IsNullOrWhiteSpace(metadata.Title) ? fileTitle : metadata.Title;
-        var artist = MergeArtists(fileArtist, metadata.Artist, metadata.AlbumArtist);
-        return new LocalMediaEntry(path, stem, artist, title);
+        return new LocalMediaEntry(path, stem, fileArtist, fileTitle);
     }
 
     private static LocalMediaEntry? FindBestMatch(TrackInfo track, IReadOnlyList<LocalMediaEntry> entries)
     {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         LocalMediaEntry? bestEntry = null;
         var bestScore = 0;
         foreach (var entry in entries)
         {
+            if (stopwatch.ElapsedMilliseconds > 80)
+            {
+                break;
+            }
+
             var score = ScoreEntry(track, entry);
             if (score < 70)
             {

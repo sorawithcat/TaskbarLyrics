@@ -3,6 +3,8 @@ using TaskbarLyrics.Core.Database;
 using TaskbarLyrics.Core.Models;
 using TaskbarLyrics.Core.Utilities;
 
+#pragma warning disable CS0162
+
 namespace TaskbarLyrics.Core.Services;
 
 public sealed class LyricProviderRegistry : ILyricProviderRegistry
@@ -99,6 +101,41 @@ public sealed class LyricProviderRegistry : ILyricProviderRegistry
                     cancellationToken);
                 if (officialResult.Document is not null)
                 {
+                    var weightedOfficial = ApplyQualityWeight(officialProvider, officialResult.Document);
+                    if (weightedOfficial.BestScore >= LyricMatchingPolicy.OfficialImmediateAcceptScore)
+                    {
+                        stopwatch.Stop();
+                        Log.Info($"Official lyric source [{officialSource}] returned high confidence score {weightedOfficial.BestScore}, accepting exclusively. Elapsed: {stopwatch.ElapsedMilliseconds} ms");
+                        return BuildResults(new Dictionary<ILyricProvider, LyricDocument?>
+                        {
+                            [officialProvider] = weightedOfficial
+                        });
+                    }
+
+                    Log.Info($"Official lyric source [{officialSource}] returned medium confidence score {weightedOfficial.BestScore}, running fallback competition.");
+                    var competitionResults = await ResolveFallbackAsync(overriddenTrack, cancellationToken);
+                    var bestFallback = competitionResults
+                        .Where(pair => pair.Value is not null)
+                        .OrderByDescending(pair => pair.Value!.BestScore)
+                        .FirstOrDefault();
+
+                    var selectedProvider = officialProvider;
+                    var selectedDocument = weightedOfficial;
+                    if (bestFallback.Key is not null &&
+                        bestFallback.Value!.BestScore >= weightedOfficial.BestScore + LyricMatchingPolicy.FallbackOverrideMargin)
+                    {
+                        selectedProvider = bestFallback.Key;
+                        selectedDocument = bestFallback.Value;
+                        Log.Info($"Fallback lyric source [{selectedProvider.SourceApp}] overrides official [{officialSource}]: {selectedDocument.BestScore} vs {weightedOfficial.BestScore}");
+                    }
+
+                    stopwatch.Stop();
+                    Log.Info($"Official/fallback competition completed. Selected source: [{selectedProvider.SourceApp}], score: {selectedDocument.BestScore}, elapsed: {stopwatch.ElapsedMilliseconds} ms");
+                    return BuildResults(new Dictionary<ILyricProvider, LyricDocument?>
+                    {
+                        [selectedProvider] = selectedDocument
+                    });
+
                     stopwatch.Stop();
                     Log.Info($"官方歌词源 [{officialSource}] 返回有效歌词，独占采用。总耗时: {stopwatch.ElapsedMilliseconds} ms");
                     return BuildResults(new Dictionary<ILyricProvider, LyricDocument?>
@@ -118,7 +155,43 @@ public sealed class LyricProviderRegistry : ILyricProviderRegistry
             .OrderByDescending(pair => pair.Value!.BestScore)
             .FirstOrDefault();
         Log.Info($"ResolveLyricsAsync 回退检索结束，总耗时: {stopwatch.ElapsedMilliseconds} ms，最佳歌词源: [{best.Key?.SourceApp ?? "None"}]，最终分: {best.Value?.BestScore ?? 0}");
+        if (best.Key is null)
+        {
+            LogNoLyricsSummary(overriddenTrack, track.SourceApp, fallbackResults, stopwatch.Elapsed);
+        }
+
         return BuildResults(fallbackResults);
+    }
+
+    private void LogNoLyricsSummary(
+        TrackInfo track,
+        string sourceApp,
+        IReadOnlyDictionary<ILyricProvider, LyricDocument?> fallbackResults,
+        TimeSpan elapsed)
+    {
+        var official = LyricSourceRoutingPolicy.TryGetOfficialProvider(sourceApp, out var officialSource)
+            ? officialSource
+            : "None";
+        var fallbackSummary = fallbackResults.Count == 0
+            ? "None"
+            : string.Join(", ", fallbackResults
+                .OrderBy(pair => pair.Key.SourceApp, StringComparer.OrdinalIgnoreCase)
+                .Select(pair => $"{pair.Key.SourceApp}:{FormatDocumentSummary(pair.Value)}"));
+
+        Log.Warn(
+            "No lyrics resolved. " +
+            $"Track='{track.Title}' Artist='{track.Artist}' SourceApp='{sourceApp}' " +
+            $"Official='{official}' FallbackResults='{fallbackSummary}' ElapsedMs={elapsed.TotalMilliseconds:F0}");
+    }
+
+    private static string FormatDocumentSummary(LyricDocument? document)
+    {
+        if (document is null)
+        {
+            return "null";
+        }
+
+        return $"score={document.BestScore},lines={document.Lines.Count}";
     }
 
     private async Task<Dictionary<ILyricProvider, LyricDocument?>> ResolveFallbackAsync(
@@ -188,6 +261,7 @@ public sealed class LyricProviderRegistry : ILyricProviderRegistry
             var providerTask = (Task<(ILyricProvider Provider, LyricDocument? Document)>)completedTask;
             pendingTasks.Remove(providerTask);
             var (provider, document) = await providerTask;
+            documents[provider] = document;
             if (document is null)
             {
                 continue;

@@ -13,6 +13,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>Assets\AppIcon\TaskbarLyrics.ico</ApplicationIcon>
     <Version>1.1.0</Version>
+    <StartupObject>TaskbarLyrics.App.Program</StartupObject>
   </PropertyGroup>
 
   <ItemGroup>
