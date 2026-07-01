@@ -696,9 +696,18 @@ public partial class MainWindow : Window
 
         _lastDisplayedCoverBytes = null;
         _currentCoverVisualTrackId = trackId;
-        CancelCoverRefresh();
+        var shouldRefreshMissingCover = trackId is not null && _localCoverSearchMode != LocalCoverSearchMode.LocalOnly;
+        if (!shouldRefreshMissingCover)
+        {
+            CancelCoverRefresh();
+        }
+
         UpdateCoverAccent(null);
         LyricsDisplay.SetCover(null, fallbackText, fallbackColor);
+        if (shouldRefreshMissingCover)
+        {
+            ScheduleCoverRefresh(trackId);
+        }
     }
 
     private bool TryDisplayCoverBytes(
@@ -740,7 +749,7 @@ public partial class MainWindow : Window
         var cts = new CancellationTokenSource();
         _coverRefreshCts = cts;
         _coverRefreshTrackId = trackId;
-        _ = RefreshCoverWhenReadyAsync(trackId, cts.Token);
+        _ = RefreshCoverWhenReadyAsync(trackId, cts);
     }
 
     private void CancelCoverRefresh()
@@ -751,17 +760,31 @@ public partial class MainWindow : Window
         _coverRefreshTrackId = null;
     }
 
-    private async Task RefreshCoverWhenReadyAsync(string? expectedTrackId, CancellationToken cancellationToken)
+    private async Task RefreshCoverWhenReadyAsync(string? expectedTrackId, CancellationTokenSource owner)
     {
-        var delays = new[] { 120, 180, 260, 360, 520, 760, 1000 };
-        foreach (var delay in delays)
+        var cancellationToken = owner.Token;
+        try
         {
-            try
+            var delays = new[] { 120, 180, 260, 360, 520, 760, 1000, 1500, 2200, 3200, 4500 };
+            foreach (var delay in delays)
             {
                 await Task.Delay(delay, cancellationToken);
                 var snapshot = await _musicSessionProvider.GetCurrentAsync(cancellationToken);
                 if (!string.Equals(snapshot.Track?.Id, expectedTrackId, StringComparison.Ordinal))
                 {
+                    return;
+                }
+
+                if (snapshot.CoverImageBytes is { Length: > 0 })
+                {
+                    var (fallbackText, fallbackColor) = GetCoverFallback(snapshot.Track?.SourceApp ?? string.Empty);
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        if (!cancellationToken.IsCancellationRequested)
+                        {
+                            TryDisplayCoverBytes(expectedTrackId, snapshot.CoverImageBytes, fallbackText, fallbackColor);
+                        }
+                    });
                     return;
                 }
 
@@ -772,19 +795,33 @@ public partial class MainWindow : Window
                         UpdateCover(snapshot);
                     }
                 });
-
-                if (!snapshot.IsCoverLoading || snapshot.CoverImageBytes is { Length: > 0 })
-                {
-                    return;
-                }
             }
-            catch (OperationCanceledException)
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch
+        {
+            return;
+        }
+        finally
+        {
+            try
             {
-                return;
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    if (ReferenceEquals(_coverRefreshCts, owner))
+                    {
+                        _coverRefreshCts = null;
+                        _coverRefreshTrackId = null;
+                        owner.Dispose();
+                    }
+                });
             }
             catch
             {
-                return;
+                // App is shutting down; the owner is disposed by window cleanup.
             }
         }
     }
