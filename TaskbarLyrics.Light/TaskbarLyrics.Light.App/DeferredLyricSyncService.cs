@@ -78,6 +78,8 @@ internal sealed class DeferredLyricSyncService : IDisposable
         previous.EnableQQMusic != current.EnableQQMusic ||
         previous.EnableKugou != current.EnableKugou ||
         previous.EnableSpotify != current.EnableSpotify ||
+        previous.EnableLocalLyrics != current.EnableLocalLyrics ||
+        !previous.LocalMusicFolders.SequenceEqual(current.LocalMusicFolders) ||
         !previous.SourceRecognitionOrder.SequenceEqual(current.SourceRecognitionOrder);
 
     private void ThrowIfDisposed()

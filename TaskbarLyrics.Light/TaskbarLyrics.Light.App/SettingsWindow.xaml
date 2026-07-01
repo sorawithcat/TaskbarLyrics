@@ -82,6 +82,9 @@
                     <RadioButton x:Name="NavDebug" Style="{StaticResource SettingsNavButtonStyle}" GroupName="Nav" Checked="Nav_Checked">
                         <StackPanel Orientation="Horizontal"><TextBlock Width="28" Text="♢" /><TextBlock Text="调试" FontWeight="SemiBold" /></StackPanel>
                     </RadioButton>
+                    <RadioButton x:Name="NavAbout" Style="{StaticResource SettingsNavButtonStyle}" GroupName="Nav" Checked="Nav_Checked">
+                        <StackPanel Orientation="Horizontal"><TextBlock Width="28" Text="i" /><TextBlock Text="关于" FontWeight="SemiBold" /></StackPanel>
+                    </RadioButton>
                 </StackPanel>
             </DockPanel>
         </Border>
@@ -251,6 +254,58 @@
                                     </StackPanel>
                                     <CheckBox x:Name="EnablePureMusicSpectrumCheck" Grid.Column="1" Style="{StaticResource SettingsToggleSwitchStyle}" />
                                 </Grid>
+                            </Border>
+                            <Border Style="{StaticResource SettingsRowCardStyle}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="启用频谱" FontWeight="SemiBold" />
+                                        <TextBlock Text="总开关。关闭后纯音乐与无歌词时都不会显示频谱。" Foreground="{StaticResource SettingsMutedBrush}" FontSize="12" Margin="0,3,0,0" />
+                                    </StackPanel>
+                                    <CheckBox x:Name="EnableSpectrumCheck" Grid.Column="1" Style="{StaticResource SettingsToggleSwitchStyle}" />
+                                </Grid>
+                            </Border>
+                            <Border Style="{StaticResource SettingsRowCardStyle}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="未检索到歌词时显示频谱" FontWeight="SemiBold" />
+                                        <TextBlock Text="歌词源没有返回可用歌词时，用频谱替代“暂未找到歌词”。" Foreground="{StaticResource SettingsMutedBrush}" FontSize="12" Margin="0,3,0,0" />
+                                    </StackPanel>
+                                    <CheckBox x:Name="ShowSpectrumWhenLyricsNotFoundCheck" Grid.Column="1" Style="{StaticResource SettingsToggleSwitchStyle}" />
+                                </Grid>
+                            </Border>
+                            <Border Style="{StaticResource SettingsRowCardStyle}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="优先使用本地歌词" FontWeight="SemiBold" />
+                                        <TextBlock Text="播放本地音乐时，先从下方目录中匹配同名歌词文件。" Foreground="{StaticResource SettingsMutedBrush}" FontSize="12" Margin="0,3,0,0" />
+                                    </StackPanel>
+                                    <CheckBox x:Name="EnableLocalLyricsCheck" Grid.Column="1" Style="{StaticResource SettingsToggleSwitchStyle}" />
+                                </Grid>
+                            </Border>
+                            <Border Style="{StaticResource SettingsRowCardStyle}">
+                                <StackPanel>
+                                    <TextBlock Text="本地音乐目录" FontWeight="SemiBold" />
+                                    <TextBlock Text="一行一个目录，支持同名 .lrc / .qrc / .krc 歌词文件。" Foreground="{StaticResource SettingsMutedBrush}" FontSize="12" Margin="0,3,0,10" />
+                                    <TextBox x:Name="LocalMusicFoldersBox"
+                                             AcceptsReturn="True"
+                                             MinHeight="72"
+                                             VerticalScrollBarVisibility="Auto"
+                                             TextWrapping="Wrap"
+                                             FontFamily="Consolas, Courier New"
+                                             Padding="10,8" />
+                                </StackPanel>
                             </Border>
                             <Border Style="{StaticResource SettingsRowCardStyle}">
                                 <Grid>
@@ -532,6 +587,19 @@
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="强制置顶歌词窗口" FontWeight="SemiBold" />
+                                        <TextBlock Text="关闭后歌词窗口不再始终位于最前，便于操作其他窗口。" Foreground="{StaticResource SettingsMutedBrush}" FontSize="12" Margin="0,3,0,0" />
+                                    </StackPanel>
+                                    <CheckBox x:Name="ForceAlwaysOnTopCheck" Grid.Column="1" Style="{StaticResource SettingsToggleSwitchStyle}" />
+                                </Grid>
+                            </Border>
+                            <Border Style="{StaticResource SettingsRowCardStyle}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="280" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Text="水平锚点" FontWeight="SemiBold" VerticalAlignment="Center" />
@@ -608,6 +676,65 @@
                                     </StackPanel>
                                     <Button x:Name="ClearCacheButton" Grid.Column="1" Content="清除缓存" Style="{StaticResource SettingsDangerButtonStyle}" Height="38" MinWidth="96" />
                                 </Grid>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 关于 -->
+                    <Border x:Name="SectionAbout" Style="{StaticResource SettingsCardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="关于" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock Text="版本信息与更新检查。" Foreground="{StaticResource SettingsMutedBrush}" FontSize="12" Margin="0,5,0,14" />
+                            <Border Style="{StaticResource SettingsRowCardStyle}">
+                                <StackPanel>
+                                    <TextBlock Text="TaskbarLyrics Light" FontSize="16" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="AppVersionText"
+                                               Margin="0,6,0,0"
+                                               Foreground="{StaticResource SettingsMutedBrush}"
+                                               FontSize="12" />
+                                    <TextBlock Text="原生 WPF 轻量版，共享 TaskbarLyrics.Core 歌词检索逻辑。"
+                                               TextWrapping="Wrap"
+                                               Foreground="{StaticResource SettingsMutedBrush}"
+                                               FontSize="12"
+                                               Margin="0,8,0,0" />
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource SettingsRowCardStyle}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="自动检查更新" FontWeight="SemiBold" />
+                                        <TextBlock Text="每天最多检查一次，发现新版本时通过系统通知提醒。" Foreground="{StaticResource SettingsMutedBrush}" FontSize="12" Margin="0,3,0,0" />
+                                    </StackPanel>
+                                    <CheckBox x:Name="AutoCheckUpdatesCheck" Grid.Column="1" Style="{StaticResource SettingsToggleSwitchStyle}" />
+                                </Grid>
+                            </Border>
+                            <Border Style="{StaticResource SettingsRowCardStyle}">
+                                <StackPanel>
+                                    <Button x:Name="CheckUpdateButton"
+                                            Content="检查更新"
+                                            Style="{StaticResource SettingsPrimaryButtonStyle}"
+                                            Height="38"
+                                            MinWidth="120"
+                                            HorizontalAlignment="Left"
+                                            Click="CheckUpdateButton_Click" />
+                                    <TextBlock x:Name="UpdateStatusText"
+                                               Margin="0,10,0,0"
+                                               TextWrapping="Wrap"
+                                               Foreground="{StaticResource SettingsMutedBrush}"
+                                               FontSize="12" />
+                                    <Button x:Name="OpenRepositoryButton"
+                                            Margin="0,12,0,0"
+                                            Content="打开 GitHub 仓库"
+                                            Style="{StaticResource SettingsPrimaryButtonStyle}"
+                                            Height="38"
+                                            MinWidth="160"
+                                            HorizontalAlignment="Left"
+                                            Click="OpenRepositoryButton_Click" />
+                                </StackPanel>
                             </Border>
                         </StackPanel>
                     </Border>

@@ -30,12 +30,33 @@ public sealed class SystemAudioSpectrumService : IDisposable
     private SpectrumTuningSettings _tuningSettings = SpectrumTuningSettings.CreateDefault();
     private bool _isStarted;
     private volatile bool _isAvailable;
+    private int _diagnosticSampleRate;
+    private int _diagnosticChannels;
+    private float _diagnosticInputPeak;
+    private DateTimeOffset? _lastAudioUtc;
+    private string _diagnosticFormat = "Waiting";
+    private string _lastError = string.Empty;
 
     public static IReadOnlyList<float> Silence { get; } = new float[BarCount];
 
     public bool IsAvailable => _isAvailable;
 
     public bool IsStarted => _isStarted;
+
+    public SpectrumCaptureDiagnostics GetDiagnostics()
+    {
+        lock (_sync)
+        {
+            return new SpectrumCaptureDiagnostics(
+                _isAvailable,
+                _diagnosticSampleRate,
+                _diagnosticChannels,
+                _diagnosticFormat,
+                _diagnosticInputPeak,
+                _lastAudioUtc,
+                _lastError);
+        }
+    }
 
     public void ApplyTuning(SpectrumTuningSettings settings)
     {
@@ -162,9 +183,13 @@ public sealed class SystemAudioSpectrumService : IDisposable
             {
                 RunCaptureSession();
             }
-            catch
+            catch (Exception ex)
             {
                 _isAvailable = false;
+                lock (_sync)
+                {
+                    _lastError = $"{ex.GetType().Name}: {ex.Message}";
+                }
             }
 
             if (!_cts.IsCancellationRequested)
@@ -192,6 +217,13 @@ public sealed class SystemAudioSpectrumService : IDisposable
             Marshal.ThrowExceptionForHR(audioClient.GetMixFormat(out mixFormatPtr));
             var format = AudioFormat.FromWaveFormat(mixFormatPtr);
             _sampleRate = format.SampleRate;
+            lock (_sync)
+            {
+                _diagnosticSampleRate = format.SampleRate;
+                _diagnosticChannels = format.Channels;
+                _diagnosticFormat = $"{format.SampleRate} Hz, {format.Channels} ch, {format.BytesPerSample * 8}-bit" +
+                    (format.IsFloat ? " float" : " pcm");
+            }
 
             Marshal.ThrowExceptionForHR(audioClient.Initialize(
                 AudclntSharemodeShared,
@@ -206,6 +238,10 @@ public sealed class SystemAudioSpectrumService : IDisposable
             captureClient = (IAudioCaptureClient)captureClientObject;
             Marshal.ThrowExceptionForHR(audioClient.Start());
             _isAvailable = true;
+            lock (_sync)
+            {
+                _lastError = string.Empty;
+            }
 
             while (!_cts.IsCancellationRequested)
             {
@@ -272,6 +308,7 @@ public sealed class SystemAudioSpectrumService : IDisposable
     {
         lock (_sync)
         {
+            _diagnosticInputPeak = 0;
             for (var i = 0; i < frameCount; i++)
             {
                 _ringBuffer[_writeIndex] = 0;
@@ -288,6 +325,7 @@ public sealed class SystemAudioSpectrumService : IDisposable
 
         lock (_sync)
         {
+            var peak = 0f;
             for (var frame = 0; frame < frameCount; frame++)
             {
                 var sum = 0f;
@@ -297,8 +335,16 @@ public sealed class SystemAudioSpectrumService : IDisposable
                     sum += ReadSample(bytes, frameOffset + (channel * format.BytesPerSample), format);
                 }
 
-                _ringBuffer[_writeIndex] = sum / Math.Max(1, format.Channels);
+                var sample = sum / Math.Max(1, format.Channels);
+                peak = Math.Max(peak, Math.Abs(sample));
+                _ringBuffer[_writeIndex] = sample;
                 _writeIndex = (_writeIndex + 1) % RingBufferSize;
+            }
+
+            _diagnosticInputPeak = peak;
+            if (peak > 0.0001f)
+            {
+                _lastAudioUtc = DateTimeOffset.UtcNow;
             }
         }
     }

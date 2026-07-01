@@ -49,6 +49,14 @@
                     Click="ResetButton_Click" />
         </Grid>
 
+        <TextBlock x:Name="DiagnosticsText"
+                   DockPanel.Dock="Top"
+                   Margin="0,0,0,12"
+                   FontSize="11.5"
+                   Foreground="#9CA3AF"
+                   TextWrapping="Wrap"
+                   Text="等待频谱数据..." />
+
         <ScrollViewer VerticalScrollBarVisibility="Auto">
             <StackPanel x:Name="SlidersPanel" />
         </ScrollViewer>

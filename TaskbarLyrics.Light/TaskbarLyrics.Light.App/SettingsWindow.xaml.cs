@@ -1,5 +1,8 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Net.Http;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Markup;
@@ -19,6 +22,7 @@ public partial class SettingsWindow : Window
     private bool _sidebarCollapsed;
     private bool _isUpdatingNavFromScroll;
     private bool _fontOptionsPopulated;
+    private bool _isCheckingUpdate;
 
     public SettingsWindow(AppSettings settings)
     {
@@ -88,6 +92,17 @@ public partial class SettingsWindow : Window
         AutoHideLyricsWhenPlayerClosesCheck.Unchecked += (_, _) => OnSettingChanged();
         EnablePureMusicSpectrumCheck.Checked += (_, _) => OnSettingChanged();
         EnablePureMusicSpectrumCheck.Unchecked += (_, _) => OnSettingChanged();
+        EnableSpectrumCheck.Checked += (_, _) => OnSettingChanged();
+        EnableSpectrumCheck.Unchecked += (_, _) => OnSettingChanged();
+        ShowSpectrumWhenLyricsNotFoundCheck.Checked += (_, _) => OnSettingChanged();
+        ShowSpectrumWhenLyricsNotFoundCheck.Unchecked += (_, _) => OnSettingChanged();
+        EnableLocalLyricsCheck.Checked += (_, _) => OnSettingChanged();
+        EnableLocalLyricsCheck.Unchecked += (_, _) => OnSettingChanged();
+        LocalMusicFoldersBox.LostFocus += (_, _) => OnSettingChanged();
+        ForceAlwaysOnTopCheck.Checked += (_, _) => OnSettingChanged();
+        ForceAlwaysOnTopCheck.Unchecked += (_, _) => OnSettingChanged();
+        AutoCheckUpdatesCheck.Checked += (_, _) => OnSettingChanged();
+        AutoCheckUpdatesCheck.Unchecked += (_, _) => OnSettingChanged();
         ShowBackgroundCheck.Checked += (_, _) => OnSettingChanged();
         ShowBackgroundCheck.Unchecked += (_, _) => OnSettingChanged();
         ShowBorderCheck.Checked += (_, _) => OnSettingChanged();
@@ -160,6 +175,7 @@ public partial class SettingsWindow : Window
             nameof(NavAppearance) => SectionAppearance,
             nameof(NavLayout) => SectionLayout,
             nameof(NavDebug) => SectionDebug,
+            nameof(NavAbout) => SectionAbout,
             _ => null
         };
 
@@ -191,7 +207,8 @@ public partial class SettingsWindow : Window
             (SectionLyrics, NavLyrics),
             (SectionAppearance, NavAppearance),
             (SectionLayout, NavLayout),
-            (SectionDebug, NavDebug)
+            (SectionDebug, NavDebug),
+            (SectionAbout, NavAbout)
         };
 
         var active = sections
@@ -267,6 +284,10 @@ public partial class SettingsWindow : Window
         AutoShowLyricsWhenPlayerOpensCheck.IsChecked = _settings.AutoShowLyricsWhenPlayerOpens;
         AutoHideLyricsWhenPlayerClosesCheck.IsChecked = _settings.AutoHideLyricsWhenPlayerCloses;
         EnablePureMusicSpectrumCheck.IsChecked = _settings.EnablePureMusicSpectrum;
+        EnableSpectrumCheck.IsChecked = _settings.EnableSpectrum;
+        ShowSpectrumWhenLyricsNotFoundCheck.IsChecked = _settings.ShowSpectrumWhenLyricsNotFound;
+        EnableLocalLyricsCheck.IsChecked = _settings.EnableLocalLyrics;
+        LocalMusicFoldersBox.Text = string.Join(Environment.NewLine, _settings.LocalMusicFolders);
             ShowBackgroundCheck.IsChecked = _settings.ShowBackground;
             ShowBorderCheck.IsChecked = _settings.ShowBorder;
             ShowTextShadowCheck.IsChecked = _settings.ShowTextShadow;
@@ -285,6 +306,8 @@ public partial class SettingsWindow : Window
             AutoAdjustWindowHeightCheck.IsChecked = _settings.AutoAdjustWindowHeight;
             XOffsetStepper.Value = _settings.XOffset;
             YOffsetStepper.Value = _settings.YOffset;
+            ForceAlwaysOnTopCheck.IsChecked = _settings.ForceAlwaysOnTop;
+            AutoCheckUpdatesCheck.IsChecked = _settings.AutoCheckUpdates;
 
             SelectComboByTag(FontWeightCombo, NormalizeFontWeight(_settings.FontWeight));
             SelectComboByTag(HorizontalAnchorCombo, _settings.HorizontalAnchor.ToString());
@@ -296,6 +319,7 @@ public partial class SettingsWindow : Window
             UpdateLineGapControlsState();
             UpdateWindowWidthControlsState();
             UpdateWindowHeightControlsState();
+            RenderAbout();
         }
         finally
         {
@@ -438,6 +462,12 @@ public partial class SettingsWindow : Window
         _settings.AutoShowLyricsWhenPlayerOpens = AutoShowLyricsWhenPlayerOpensCheck.IsChecked == true;
         _settings.AutoHideLyricsWhenPlayerCloses = AutoHideLyricsWhenPlayerClosesCheck.IsChecked == true;
         _settings.EnablePureMusicSpectrum = EnablePureMusicSpectrumCheck.IsChecked == true;
+        _settings.EnableSpectrum = EnableSpectrumCheck.IsChecked == true;
+        _settings.ShowSpectrumWhenLyricsNotFound = ShowSpectrumWhenLyricsNotFoundCheck.IsChecked == true;
+        _settings.EnableLocalLyrics = EnableLocalLyricsCheck.IsChecked == true;
+        _settings.LocalMusicFolders = NormalizeLocalMusicFolders(LocalMusicFoldersBox.Text);
+        _settings.ForceAlwaysOnTop = ForceAlwaysOnTopCheck.IsChecked == true;
+        _settings.AutoCheckUpdates = AutoCheckUpdatesCheck.IsChecked == true;
         _settings.ShowBackground = ShowBackgroundCheck.IsChecked == true;
         _settings.ShowBorder = ShowBorderCheck.IsChecked == true;
         _settings.ShowTextShadow = ShowTextShadowCheck.IsChecked == true;
@@ -476,6 +506,96 @@ public partial class SettingsWindow : Window
         {
             app.SaveSettings(_settings.Clone());
         }
+    }
+
+    private void RenderAbout()
+    {
+        AppVersionText.Text = $"当前版本 {UpdateChecker.GetCurrentVersion()}";
+        if (!_isCheckingUpdate)
+        {
+            UpdateStatusText.Text = string.Empty;
+        }
+    }
+
+    private async void CheckUpdateButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isCheckingUpdate)
+        {
+            return;
+        }
+
+        _isCheckingUpdate = true;
+        CheckUpdateButton.IsEnabled = false;
+        CheckUpdateButton.Content = "检查中...";
+        UpdateStatusText.Text = "正在检查更新...";
+
+        try
+        {
+            var result = await UpdateChecker.CheckLatestAsync();
+            _settings.LastUpdateCheckUtc = DateTimeOffset.UtcNow;
+            _settings.AutoCheckUpdates = AutoCheckUpdatesCheck.IsChecked == true;
+
+            UpdateStatusText.Text = result.State switch
+            {
+                UpdateCheckState.Available =>
+                    $"发现新版本 {result.Version}，当前版本 {result.CurrentVersion}。",
+                UpdateCheckState.Latest =>
+                    $"已是最新版本（{result.CurrentVersion}）。",
+                _ => "检查更新失败，请稍后重试。"
+            };
+
+            SaveSettings();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or NotSupportedException)
+        {
+            UpdateStatusText.Text = "检查更新失败，请检查网络连接。";
+        }
+        finally
+        {
+            _isCheckingUpdate = false;
+            CheckUpdateButton.IsEnabled = true;
+            CheckUpdateButton.Content = "检查更新";
+        }
+    }
+
+    private void OpenRepositoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = UpdateChecker.RepositoryUrl,
+                UseShellExecute = true
+            });
+        }
+        catch
+        {
+            UpdateStatusText.Text = "无法打开浏览器。";
+        }
+    }
+
+    private static List<string> NormalizeLocalMusicFolders(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return new List<string>();
+        }
+
+        return text
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(path => path.Trim().Trim('"'))
+            .Where(path => path.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<string> NormalizeLocalMusicFolders(IEnumerable<string>? folders)
+    {
+        return (folders ?? Enumerable.Empty<string>())
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(path => path.Trim().Trim('"'))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private void ResetDefaults()
@@ -643,7 +763,14 @@ public partial class SettingsWindow : Window
         target.StartWithWindows = source.StartWithWindows;
         target.AutoShowLyricsWhenPlayerOpens = source.AutoShowLyricsWhenPlayerOpens;
         target.AutoHideLyricsWhenPlayerCloses = source.AutoHideLyricsWhenPlayerCloses;
+        target.AutoCheckUpdates = source.AutoCheckUpdates;
+        target.LastUpdateCheckUtc = source.LastUpdateCheckUtc;
+        target.LastNotifiedUpdateVersion = source.LastNotifiedUpdateVersion;
+        target.EnableSpectrum = source.EnableSpectrum;
         target.EnablePureMusicSpectrum = source.EnablePureMusicSpectrum;
+        target.ShowSpectrumWhenLyricsNotFound = source.ShowSpectrumWhenLyricsNotFound;
+        target.EnableLocalLyrics = source.EnableLocalLyrics;
+        target.LocalMusicFolders = NormalizeLocalMusicFolders(source.LocalMusicFolders);
         target.FontSize = source.FontSize;
         target.AutoAdjustLineGap = source.AutoAdjustLineGap;
         target.LineGap = source.LineGap;
@@ -665,6 +792,7 @@ public partial class SettingsWindow : Window
         target.HorizontalAnchor = source.HorizontalAnchor;
         target.XOffset = source.XOffset;
         target.YOffset = source.YOffset;
+        target.ForceAlwaysOnTop = source.ForceAlwaysOnTop;
         target.EnableSmtcTimelineMonitor = source.EnableSmtcTimelineMonitor;
     }
 

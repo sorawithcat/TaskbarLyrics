@@ -42,6 +42,10 @@ public sealed class AppSettings
 
     public bool EnableSpotify { get; set; } = true;
 
+    public bool EnableLocalLyrics { get; set; } = true;
+
+    public List<string> LocalMusicFolders { get; set; } = new();
+
     public bool ShowLyricsOnStartup { get; set; } = true;
 
     public bool StartWithWindows { get; set; } = true;
@@ -50,7 +54,17 @@ public sealed class AppSettings
 
     public bool AutoHideLyricsWhenPlayerCloses { get; set; } = true;
 
+    public bool AutoCheckUpdates { get; set; } = true;
+
+    public DateTimeOffset? LastUpdateCheckUtc { get; set; }
+
+    public string LastNotifiedUpdateVersion { get; set; } = "";
+
+    public bool EnableSpectrum { get; set; } = true;
+
     public bool EnablePureMusicSpectrum { get; set; } = true;
+
+    public bool ShowSpectrumWhenLyricsNotFound { get; set; } = false;
 
     public double FontSize { get; set; } = 14;
 
@@ -94,6 +108,8 @@ public sealed class AppSettings
 
     public double YOffset { get; set; }
 
+    public bool ForceAlwaysOnTop { get; set; } = true;
+
     // Debug only: show real-time SMTC timeline diagnostics window.
     public bool EnableSmtcTimelineMonitor { get; set; } = false;
 
@@ -101,6 +117,7 @@ public sealed class AppSettings
     {
         var cloned = (AppSettings)MemberwiseClone();
         cloned.SourceRecognitionOrder = SourceRecognitionOrder.ToList();
+        cloned.LocalMusicFolders = LocalMusicFolders.ToList();
         return cloned;
     }
 }

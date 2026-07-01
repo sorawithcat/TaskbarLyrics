@@ -211,7 +211,7 @@ public partial class LyricsDisplayControl : System.Windows.Controls.UserControl
         double progress,
         int currentLineIndex,
         string? trackId,
-        bool isPureMusic,
+        bool showSpectrum,
         bool isPlaying)
     {
         var safeCurrent = ToDisplayLine(current, SearchingText);
@@ -219,7 +219,7 @@ public partial class LyricsDisplayControl : System.Windows.Controls.UserControl
         var p = Math.Clamp(progress, 0, 1);
         var normalizedTrackId = trackId ?? string.Empty;
 
-        if (isPureMusic)
+        if (showSpectrum)
         {
             if (normalizedTrackId.Length > 0)
             {

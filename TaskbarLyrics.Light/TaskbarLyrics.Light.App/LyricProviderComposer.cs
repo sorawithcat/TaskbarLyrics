@@ -33,6 +33,13 @@ internal static class LyricProviderComposer
                 () => new LyricifyLyricProvider("Kugou", Lyricify.Lyrics.Searchers.Searchers.Kugou)));
         }
 
+        if (settings.EnableLocalLyrics && settings.LocalMusicFolders.Count > 0)
+        {
+            providers.Add(new LazyLyricProvider(
+                "Local",
+                () => new LocalLyricProvider(settings.LocalMusicFolders)));
+        }
+
         return new LyricSyncService(
             new LyricProviderRegistry(providers),
             _ => false);

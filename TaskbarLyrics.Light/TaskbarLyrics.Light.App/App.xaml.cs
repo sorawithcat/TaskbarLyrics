@@ -1,17 +1,24 @@
 using System.IO;
+using System.Net.Http;
+using System.Text.Json;
 using System.Windows;
 using Microsoft.Win32;
+using TaskbarLyrics.Core.Utilities;
 
 namespace TaskbarLyrics.Light.App;
 
 public partial class App : System.Windows.Application
 {
+    private static readonly TimeSpan AutoUpdateCheckDelay = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan AutoUpdateCheckInterval = TimeSpan.FromDays(1);
+
     private SettingsStore? _settingsStore;
     private TrayService? _trayService;
     private SettingsWindow? _settingsWindow;
     private SpectrumTuningWindow? _spectrumTuningWindow;
     private LyricsWindowHost? _lyricsWindowHost;
     private PlayerPresenceMonitor? _playerPresenceMonitor;
+    private CancellationTokenSource? _activationServerCancellation;
     private SpectrumTuningSettings _spectrumTuningSettings = SpectrumTuningSettings.CreateDefault();
     private bool _userDismissedAutoLyrics;
 
@@ -21,7 +28,14 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        if (!SingleInstanceService.EnsureCurrentInstance())
+        {
+            Environment.Exit(0);
+            return;
+        }
+
         base.OnStartup(e);
+        Log.EnsureLogsDirectory();
 
         BundledFontRegistrar.Register();
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -38,27 +52,85 @@ public partial class App : System.Windows.Application
 
         _lyricsWindowHost = new LyricsWindowHost(Settings);
 
-        if (Settings.ShowLyricsOnStartup)
+        // 开启「播放器关闭时隐藏」时，启动阶段默认不显示；若同时开启「播放器打开时显示」，由 PlayerPresenceMonitor 检测到播放后再显示。
+        var shouldShowOnStartup = Settings.ShowLyricsOnStartup && !Settings.AutoHideLyricsWhenPlayerCloses;
+        if (shouldShowOnStartup)
         {
             _lyricsWindowHost.Show();
         }
 
-        UserWantsLyricsVisible = Settings.ShowLyricsOnStartup;
+        UserWantsLyricsVisible = shouldShowOnStartup;
         _lyricsWindowHost.ApplySpectrumTuning(_spectrumTuningSettings);
         _trayService = new TrayService(ToggleLyricsWindow, OpenSettingsWindow, ExitApplication);
+        StartActivationServer();
         SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
         ConfigurePlayerPresenceMonitor();
+        _ = RunAutomaticUpdateCheckAsync();
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _activationServerCancellation?.Cancel();
+        _activationServerCancellation?.Dispose();
         SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
         _playerPresenceMonitor?.Dispose();
         _settingsStore?.Save(Settings);
         _spectrumTuningWindow?.Close();
         _lyricsWindowHost?.Dispose();
         _trayService?.Dispose();
+        SingleInstanceService.Release();
         base.OnExit(e);
+    }
+
+    private async Task RunAutomaticUpdateCheckAsync()
+    {
+        if (!Settings.AutoCheckUpdates)
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        if (Settings.LastUpdateCheckUtc is { } lastCheck &&
+            now - lastCheck < AutoUpdateCheckInterval)
+        {
+            return;
+        }
+
+        try
+        {
+            await Task.Delay(AutoUpdateCheckDelay);
+            if (IsExiting || !Settings.AutoCheckUpdates)
+            {
+                return;
+            }
+
+            var result = await UpdateChecker.CheckLatestAsync();
+            Settings.LastUpdateCheckUtc = DateTimeOffset.UtcNow;
+
+            if (result.HasUpdate &&
+                !string.Equals(Settings.LastNotifiedUpdateVersion, result.Version, StringComparison.OrdinalIgnoreCase))
+            {
+                Settings.LastNotifiedUpdateVersion = result.Version;
+                _trayService?.ShowNotification(
+                    "TaskbarLyrics Light 有新版本",
+                    $"发现 {result.Version}，当前版本 {result.CurrentVersion}。可在设置页的关于中打开发布页。");
+            }
+
+            _settingsStore?.Save(Settings);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or NotSupportedException)
+        {
+            Settings.LastUpdateCheckUtc = DateTimeOffset.UtcNow;
+            _settingsStore?.Save(Settings);
+        }
+    }
+
+    private void StartActivationServer()
+    {
+        _activationServerCancellation = new CancellationTokenSource();
+        _ = Task.Run(() => SingleInstanceService.ListenForActivationAsync(
+            () => Dispatcher.InvokeAsync(OpenSettingsWindow).Task,
+            _activationServerCancellation.Token));
     }
 
     public void SaveSettings(AppSettings settings)

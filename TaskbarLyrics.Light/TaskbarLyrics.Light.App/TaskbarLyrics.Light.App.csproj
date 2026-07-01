@@ -10,6 +10,8 @@
     <RootNamespace>TaskbarLyrics.Light.App</RootNamespace>
     <AssemblyName>TaskbarLyrics.Light</AssemblyName>
     <ApplicationIcon>Assets\AppIcon\TaskbarLyrics.ico</ApplicationIcon>
+    <Version>1.1.0</Version>
+    <StartupObject>TaskbarLyrics.Light.App.Program</StartupObject>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release' and '$(RuntimeIdentifier)' != ''">

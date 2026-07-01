@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using Media = System.Windows.Media;
 
 namespace TaskbarLyrics.Light.App;
@@ -8,6 +9,7 @@ namespace TaskbarLyrics.Light.App;
 public partial class SpectrumTuningWindow : Window
 {
     private readonly Action<SpectrumTuningSettings> _apply;
+    private readonly DispatcherTimer _diagnosticsTimer;
     private bool _isLoading;
 
     public SpectrumTuningSettings Settings { get; private set; }
@@ -20,6 +22,13 @@ public partial class SpectrumTuningWindow : Window
         _apply = apply;
         BuildSliders();
         ApplyCurrent();
+        _diagnosticsTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(500)
+        };
+        _diagnosticsTimer.Tick += DiagnosticsTimer_Tick;
+        _diagnosticsTimer.Start();
+        UpdateDiagnosticsText();
     }
 
     public void ApplyExternalSettings(SpectrumTuningSettings settings)
@@ -27,6 +36,30 @@ public partial class SpectrumTuningWindow : Window
         Settings = settings.Clone();
         BuildSliders();
     }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _diagnosticsTimer.Stop();
+        _diagnosticsTimer.Tick -= DiagnosticsTimer_Tick;
+        base.OnClosed(e);
+    }
+
+    private void DiagnosticsTimer_Tick(object? sender, EventArgs e)
+    {
+        UpdateDiagnosticsText();
+    }
+
+    private void UpdateDiagnosticsText()
+    {
+        var snapshot = SpectrumDiagnosticsState.Current;
+        var lastAudio = snapshot.LastAudioUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture) ?? "-";
+        DiagnosticsText.Text =
+            $"频谱模式: {FormatBool(snapshot.IsPureMusicMode)}    播放中: {FormatBool(snapshot.IsPlaying)}    采集可用: {FormatBool(snapshot.IsCaptureAvailable)}\n" +
+            $"输入峰值: {snapshot.InputPeak:0.0000}    输出峰值: {snapshot.OutputPeak:0.0000}    格式: {snapshot.Format}\n" +
+            $"最近音频: {lastAudio}    错误: {(string.IsNullOrWhiteSpace(snapshot.LastError) ? "-" : snapshot.LastError)}";
+    }
+
+    private static string FormatBool(bool value) => value ? "是" : "否";
 
     private void BuildSliders()
     {
