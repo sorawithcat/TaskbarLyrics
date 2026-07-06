@@ -30,6 +30,7 @@ const bridge = {
 
 function updateSetting(key, value) {
   if (!state) return;
+  value = normalizeSettingValue(key, value);
   state[key] = value;
   if (key === "foregroundColorMode") updateForegroundMode(value);
   if (key === "foregroundColor") {
@@ -38,8 +39,19 @@ function updateSetting(key, value) {
     updateColorModeControl();
   }
   if (key === "enableSpectrum") updateSpectrumChildren();
+  updateDimensionSteppers(key);
+  updateRangeControls();
   animateSettingFeedback(key);
   bridge.post({ type: "update", key, value });
+}
+
+function normalizeSettingValue(key, value) {
+  if (!state) return value;
+  const stepper = document.querySelector(`.stepper[data-key="${key}"]`);
+  const rangeControl = document.querySelector(`.range-control [data-key="${key}"]`);
+  if (!stepper && !rangeControl) return value;
+  const range = stepper ? getStepperRange(stepper) : getRangeControlRange(rangeControl);
+  return clamp(Number(value), range.min, range.max);
 }
 
 function animateSettingFeedback(key) {
@@ -92,6 +104,8 @@ function renderControls() {
   updateSwatch(state.foregroundColor);
   updateColorModeControl();
   updateSpectrumChildren();
+  updateDimensionSteppers();
+  updateRangeControls();
 }
 
 function updateSpectrumChildren() {
@@ -101,6 +115,82 @@ function updateSpectrumChildren() {
     row.querySelectorAll("input, select, textarea, button").forEach((control) => {
       control.disabled = !enabled;
     });
+  });
+}
+
+function getStepperRange(stepper) {
+  const safeKey = stepper.dataset.safeKey;
+  const useSafeRange = safeKey ? Boolean(state?.[safeKey]) : false;
+  const min = Number(useSafeRange ? stepper.dataset.safeMin : stepper.dataset.extendedMin ?? stepper.dataset.min);
+  const max = Number(useSafeRange ? stepper.dataset.safeMax : stepper.dataset.extendedMax ?? stepper.dataset.max);
+  return {
+    min: Number.isFinite(min) ? min : Number(stepper.dataset.min),
+    max: Number.isFinite(max) ? max : Number(stepper.dataset.max)
+  };
+}
+
+function getRangeControlRange(input) {
+  return {
+    min: Number(input.min),
+    max: Number(input.max)
+  };
+}
+
+function updateRangeValue(input) {
+  const output = document.querySelector(`[data-value-for="${input.dataset.key}"]`);
+  if (!output) return;
+  output.textContent = `${input.value} px`;
+}
+
+function getCoverCornerRadiusMax() {
+  const coverSize = Number(state?.coverSize);
+  return Math.max(0, Math.floor((Number.isFinite(coverSize) ? coverSize : 40) / 2));
+}
+
+function updateRangeControls(changedKey = "") {
+  document.querySelectorAll('.range-control input[type="range"][data-key]').forEach((input) => {
+    const key = input.dataset.key;
+    if (changedKey && key !== changedKey && !(key === "coverCornerRadius" && changedKey === "coverSize")) return;
+
+    if (key === "coverCornerRadius") {
+      input.max = String(getCoverCornerRadiusMax());
+    }
+
+    const min = Number(input.min);
+    const max = Number(input.max);
+    const current = Number(input.value);
+    const next = clamp(Number.isFinite(current) ? current : Number(state?.[key] ?? min), min, max);
+    input.value = String(next);
+    if (state && key in state && Number(state[key]) !== next) {
+      state[key] = next;
+      bridge.post({ type: "update", key, value: next });
+    }
+
+    updateRangeValue(input);
+  });
+}
+
+function updateDimensionSteppers(changedKey = "") {
+  if (!state) return;
+  document.querySelectorAll(".stepper[data-safe-key]").forEach((stepper) => {
+    const key = stepper.dataset.key;
+    const safeKey = stepper.dataset.safeKey;
+    if (changedKey && changedKey !== key && changedKey !== safeKey) return;
+
+    const range = getStepperRange(stepper);
+    stepper.dataset.min = String(range.min);
+    stepper.dataset.max = String(range.max);
+
+    if (!(key in state)) return;
+    const decimals = Number(stepper.dataset.decimals);
+    const next = clamp(Number(state[key]), range.min, range.max);
+    if (next !== Number(state[key])) {
+      state[key] = next;
+      bridge.post({ type: "update", key, value: next });
+    }
+
+    const input = stepper.querySelector("input");
+    if (input) input.value = formatNumber(Number(state[key]), decimals);
   });
 }
 
@@ -264,6 +354,13 @@ function setupEvents() {
     });
   });
 
+  document.querySelectorAll('.range-control input[type="range"][data-key]').forEach((input) => {
+    input.addEventListener("input", () => {
+      updateRangeValue(input);
+      updateSetting(input.dataset.key, Number(input.value));
+    });
+  });
+
   document.querySelector('select[data-key="foregroundColorMode"]')?.addEventListener("change", (event) => {
     if (event.currentTarget.value === "Custom") {
       bridge.post({ type: "pickColor" });
@@ -340,7 +437,7 @@ function parseInputValue(element) {
       .filter(Boolean);
   }
 
-  if (["fontSize", "backgroundOpacity", "windowWidth", "xOffset", "yOffset"].includes(key)) {
+  if (["fontSize", "coverSize", "coverGap", "coverCornerRadius", "backgroundOpacity", "windowWidth", "xOffset", "yOffset"].includes(key)) {
     return Number(element.value);
   }
   return element.value;

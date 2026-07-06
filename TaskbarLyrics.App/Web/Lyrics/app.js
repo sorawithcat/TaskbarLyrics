@@ -842,6 +842,21 @@ window.taskbarLyrics = {
     updateMetrics();
     root.style.setProperty("--font-weight", normalizeWeight(payload.fontWeight));
 
+    const coverSize = Number(payload.coverSize);
+    if (Number.isFinite(coverSize) && coverSize > 0) {
+      root.style.setProperty("--cover-size", `${coverSize}px`);
+      updateMetrics();
+    }
+    const coverGap = Number(payload.coverGap);
+    if (Number.isFinite(coverGap) && coverGap >= 0) {
+      root.style.setProperty("--cover-gap", `${coverGap}px`);
+      updateMetrics();
+    }
+    const coverCornerRadius = Number(payload.coverCornerRadius);
+    if (Number.isFinite(coverCornerRadius) && coverCornerRadius >= 0) {
+      root.style.setProperty("--cover-radius", `${coverCornerRadius}px`);
+    }
+
     if (payload.primaryColor && CSS.supports("color", payload.primaryColor)) {
       root.style.setProperty("--primary", payload.primaryColor);
     }

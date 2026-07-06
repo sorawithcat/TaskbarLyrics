@@ -54,7 +54,7 @@ dotnet run --project TaskbarLyrics.App
 常用开发重启脚本：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/restart-app.ps1 -Build
+powershell -ExecutionPolicy Bypass -File scripts/restart-app.ps1
 ```
 
 ## 运行时目录
