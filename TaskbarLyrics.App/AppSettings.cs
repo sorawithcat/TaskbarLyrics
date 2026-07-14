@@ -14,8 +14,29 @@ public enum ForegroundColorMode
     Custom
 }
 
+public enum SpectrumDisplayMode
+{
+    PureMusicOrNoLyrics,
+    PureMusicOnly,
+    Always
+}
+
 public sealed class AppSettings
 {
+    public const double SafeFontSizeMin = 10;
+    public const double SafeFontSizeMax = 24;
+    public const double ExtendedFontSizeMin = 6;
+    public const double ExtendedFontSizeMax = 96;
+    public const double DefaultCoverSize = 34;
+    public const double SafeCoverSizeMin = 20;
+    public const double SafeCoverSizeMax = 40;
+    public const double ExtendedCoverSizeMin = 12;
+    public const double ExtendedCoverSizeMax = 200;
+    public const double DefaultCoverGap = 8;
+    public const double CoverGapMin = 0;
+    public const double CoverGapMax = 240;
+    public const double DefaultCoverCornerRadius = 6;
+
     public const string BundledFontFamily = "Source Han Sans SC";
 
     public const string DefaultFontFamily = "Source Han Sans SC, Source Han Sans CN, 思源黑体 CN, Microsoft YaHei UI, Microsoft YaHei";
@@ -60,11 +81,25 @@ public sealed class AppSettings
 
     public bool EnableSpectrum { get; set; } = true;
 
+    public SpectrumDisplayMode SpectrumDisplayMode { get; set; } = SpectrumDisplayMode.PureMusicOrNoLyrics;
+
     public bool EnablePureMusicSpectrum { get; set; } = true;
 
     public bool ShowSpectrumWhenLyricsNotFound { get; set; } = false;
 
+    public SpectrumTuningSettings SpectrumTuning { get; set; } = SpectrumTuningSettings.CreateDefault();
+
+    public bool UseSafeFontSizeRange { get; set; } = true;
+
     public double FontSize { get; set; } = 14;
+
+    public bool UseSafeCoverSizeRange { get; set; } = true;
+
+    public double CoverSize { get; set; } = DefaultCoverSize;
+
+    public double CoverGap { get; set; } = DefaultCoverGap;
+
+    public double CoverCornerRadius { get; set; } = DefaultCoverCornerRadius;
 
     public string FontFamily { get; set; } = DefaultFontFamily;
 
@@ -100,6 +135,32 @@ public sealed class AppSettings
         var cloned = (AppSettings)MemberwiseClone();
         cloned.SourceRecognitionOrder = SourceRecognitionOrder.ToList();
         cloned.LocalMusicFolders = LocalMusicFolders.ToList();
+        cloned.SpectrumTuning = SpectrumTuning.Clone();
         return cloned;
+    }
+
+    public static double ClampFontSize(double value, bool useSafeRange)
+    {
+        return useSafeRange
+            ? Math.Clamp(value, SafeFontSizeMin, SafeFontSizeMax)
+            : Math.Clamp(value, ExtendedFontSizeMin, ExtendedFontSizeMax);
+    }
+
+    public static double ClampCoverSize(double value, bool useSafeRange)
+    {
+        return useSafeRange
+            ? Math.Clamp(value, SafeCoverSizeMin, SafeCoverSizeMax)
+            : Math.Clamp(value, ExtendedCoverSizeMin, ExtendedCoverSizeMax);
+    }
+
+    public static double ClampCoverGap(double value)
+    {
+        return Math.Clamp(value, CoverGapMin, CoverGapMax);
+    }
+
+    public static double ClampCoverCornerRadius(double value, double coverSize)
+    {
+        var maxRadius = Math.Max(0, coverSize / 2);
+        return Math.Clamp(value, 0, maxRadius);
     }
 }

@@ -203,9 +203,15 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
             AutoCheckUpdates = _settings.AutoCheckUpdates,
             ShowLyricTranslation = _settings.ShowLyricTranslation,
             EnableSpectrum = _settings.EnableSpectrum,
+            SpectrumDisplayMode = _settings.SpectrumDisplayMode,
             EnablePureMusicSpectrum = _settings.EnablePureMusicSpectrum,
             ShowSpectrumWhenLyricsNotFound = _settings.ShowSpectrumWhenLyricsNotFound,
+            UseSafeFontSizeRange = _settings.UseSafeFontSizeRange,
             FontSize = _settings.FontSize,
+            UseSafeCoverSizeRange = _settings.UseSafeCoverSizeRange,
+            CoverSize = _settings.CoverSize,
+            CoverGap = _settings.CoverGap,
+            CoverCornerRadius = _settings.CoverCornerRadius,
             FontFamily = ResolveInstalledFontFamily(_settings.FontFamily) ?? ResolveInstalledFontFamily(AppSettings.DefaultFontFamily) ?? "Microsoft YaHei UI",
             FontWeight = NormalizeFontWeight(_settings.FontWeight),
             ForegroundColorMode = _settings.ForegroundColorMode,
@@ -382,6 +388,9 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
             case "enableSpectrum":
                 _settings.EnableSpectrum = ReadBool(element, _settings.EnableSpectrum);
                 break;
+            case "spectrumDisplayMode":
+                _settings.SpectrumDisplayMode = ReadEnum(element, _settings.SpectrumDisplayMode);
+                break;
             case "enablePureMusicSpectrum":
                 _settings.EnablePureMusicSpectrum = ReadBool(element, _settings.EnablePureMusicSpectrum);
                 break;
@@ -403,8 +412,27 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
             case "enableSmtcTimelineMonitor":
                 _settings.EnableSmtcTimelineMonitor = ReadBool(element, _settings.EnableSmtcTimelineMonitor);
                 break;
+            case "useSafeFontSizeRange":
+                _settings.UseSafeFontSizeRange = ReadBool(element, _settings.UseSafeFontSizeRange);
+                _settings.FontSize = AppSettings.ClampFontSize(_settings.FontSize, _settings.UseSafeFontSizeRange);
+                break;
             case "fontSize":
-                _settings.FontSize = Math.Clamp(ReadDouble(element, _settings.FontSize), 10, 40);
+                _settings.FontSize = AppSettings.ClampFontSize(ReadDouble(element, _settings.FontSize), _settings.UseSafeFontSizeRange);
+                break;
+            case "useSafeCoverSizeRange":
+                _settings.UseSafeCoverSizeRange = ReadBool(element, _settings.UseSafeCoverSizeRange);
+                _settings.CoverSize = AppSettings.ClampCoverSize(_settings.CoverSize, _settings.UseSafeCoverSizeRange);
+                _settings.CoverCornerRadius = AppSettings.ClampCoverCornerRadius(_settings.CoverCornerRadius, _settings.CoverSize);
+                break;
+            case "coverSize":
+                _settings.CoverSize = AppSettings.ClampCoverSize(ReadDouble(element, _settings.CoverSize), _settings.UseSafeCoverSizeRange);
+                _settings.CoverCornerRadius = AppSettings.ClampCoverCornerRadius(_settings.CoverCornerRadius, _settings.CoverSize);
+                break;
+            case "coverGap":
+                _settings.CoverGap = AppSettings.ClampCoverGap(ReadDouble(element, _settings.CoverGap));
+                break;
+            case "coverCornerRadius":
+                _settings.CoverCornerRadius = AppSettings.ClampCoverCornerRadius(ReadDouble(element, _settings.CoverCornerRadius), _settings.CoverSize);
                 break;
             case "fontFamily":
                 _settings.FontFamily = ReadString(element, _settings.FontFamily);
@@ -596,6 +624,15 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
             : fallback;
     }
 
+    private static TEnum ReadEnum<TEnum>(JsonElement element, TEnum fallback)
+        where TEnum : struct, Enum
+    {
+        return element.ValueKind == JsonValueKind.String &&
+            Enum.TryParse<TEnum>(element.GetString(), ignoreCase: true, out var value)
+                ? value
+                : fallback;
+    }
+
     private static List<string> ReadStringList(JsonElement element)
     {
         if (element.ValueKind == JsonValueKind.Array)
@@ -698,9 +735,15 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
         target.LastNotifiedUpdateVersion = source.LastNotifiedUpdateVersion;
         target.ShowLyricTranslation = source.ShowLyricTranslation;
         target.EnableSpectrum = source.EnableSpectrum;
+        target.SpectrumDisplayMode = source.SpectrumDisplayMode;
         target.EnablePureMusicSpectrum = source.EnablePureMusicSpectrum;
         target.ShowSpectrumWhenLyricsNotFound = source.ShowSpectrumWhenLyricsNotFound;
+        target.UseSafeFontSizeRange = source.UseSafeFontSizeRange;
         target.FontSize = source.FontSize;
+        target.UseSafeCoverSizeRange = source.UseSafeCoverSizeRange;
+        target.CoverSize = source.CoverSize;
+        target.CoverGap = source.CoverGap;
+        target.CoverCornerRadius = source.CoverCornerRadius;
         target.FontFamily = source.FontFamily;
         target.FontWeight = source.FontWeight;
         target.ForegroundColorMode = source.ForegroundColorMode;
@@ -897,9 +940,15 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
         public bool AutoCheckUpdates { get; set; }
         public bool ShowLyricTranslation { get; set; }
         public bool EnableSpectrum { get; set; }
+        public SpectrumDisplayMode SpectrumDisplayMode { get; set; }
         public bool EnablePureMusicSpectrum { get; set; }
         public bool ShowSpectrumWhenLyricsNotFound { get; set; }
+        public bool UseSafeFontSizeRange { get; set; }
         public double FontSize { get; set; }
+        public bool UseSafeCoverSizeRange { get; set; }
+        public double CoverSize { get; set; }
+        public double CoverGap { get; set; }
+        public double CoverCornerRadius { get; set; }
         public string FontFamily { get; set; } = "";
         public string FontWeight { get; set; } = "";
         public ForegroundColorMode ForegroundColorMode { get; set; }

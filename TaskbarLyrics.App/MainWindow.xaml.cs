@@ -43,8 +43,7 @@ public partial class MainWindow : Window
     private DateTimeOffset _nextLocalCoverLookupUtc;
     private bool _enableSmtcTimelineMonitor;
     private bool _enableSpectrum = true;
-    private bool _enablePureMusicSpectrum = true;
-    private bool _showSpectrumWhenLyricsNotFound;
+    private SpectrumDisplayMode _spectrumDisplayMode = SpectrumDisplayMode.PureMusicOrNoLyrics;
     private SmtcTimelineMonitorWindow? _smtcTimelineMonitorWindow;
     private bool _isWebViewReady;
     private bool _isWebViewInitializing;
@@ -149,8 +148,7 @@ public partial class MainWindow : Window
         _lyricSyncService.Dispose();
         _lyricSyncService = BuildLyricSyncService(settings);
         _enableSpectrum = settings.EnableSpectrum;
-        _enablePureMusicSpectrum = settings.EnablePureMusicSpectrum;
-        _showSpectrumWhenLyricsNotFound = settings.ShowSpectrumWhenLyricsNotFound;
+        _spectrumDisplayMode = settings.SpectrumDisplayMode;
         AnchorToTaskbar();
         AttachToTaskbarHost();
         PushStyleToWebView(settings);
@@ -425,8 +423,12 @@ public partial class MainWindow : Window
             return false;
         }
 
-        return (frame.IsPureMusic && _enablePureMusicSpectrum) ||
-            (_showSpectrumWhenLyricsNotFound && IsLyricsNotFoundFrame(frame));
+        return _spectrumDisplayMode switch
+        {
+            SpectrumDisplayMode.Always => true,
+            SpectrumDisplayMode.PureMusicOrNoLyrics => frame.IsPureMusic || IsLyricsNotFoundFrame(frame),
+            _ => frame.IsPureMusic
+        };
     }
 
     private static bool IsLyricsNotFoundFrame(LyricDisplayFrame frame)
@@ -875,7 +877,12 @@ public partial class MainWindow : Window
             fontFamily = string.IsNullOrWhiteSpace(settings.FontFamily)
                 ? AppSettings.DefaultFontFamily
                 : settings.FontFamily,
-            fontSize = Math.Clamp(settings.FontSize, 10, 40),
+            fontSize = AppSettings.ClampFontSize(settings.FontSize, settings.UseSafeFontSizeRange),
+            coverSize = AppSettings.ClampCoverSize(settings.CoverSize, settings.UseSafeCoverSizeRange),
+            coverGap = AppSettings.ClampCoverGap(settings.CoverGap),
+            coverCornerRadius = AppSettings.ClampCoverCornerRadius(
+                settings.CoverCornerRadius,
+                AppSettings.ClampCoverSize(settings.CoverSize, settings.UseSafeCoverSizeRange)),
             fontWeight = settings.FontWeight,
             primaryColor = ToCssColor(_primaryTextColor),
             secondaryColor = ToCssColor(_secondaryTextColor),
@@ -1102,10 +1109,9 @@ public partial class MainWindow : Window
         var screenHeight = SystemParameters.PrimaryScreenHeight;
         const double normalTaskbarHeight = 48;
         var taskbarHeight = Math.Max(normalTaskbarHeight, screenHeight - workArea.Height);
-        var desiredHeight = Math.Max(36, taskbarHeight - 4);
-        Height = Math.Min(desiredHeight, taskbarHeight);
-
         var settings = (System.Windows.Application.Current as App)?.Settings ?? new AppSettings();
+        Height = CalculateWindowHeight(settings, taskbarHeight, screenHeight);
+
         Left = settings.HorizontalAnchor switch
         {
             LyricsHorizontalAnchor.Left => Math.Max(0, settings.XOffset),
@@ -1113,7 +1119,27 @@ public partial class MainWindow : Window
             _ => Math.Max(0, screenWidth - Width - 230 + settings.XOffset)
         };
 
-        Top = screenHeight - taskbarHeight + ((taskbarHeight - Height) / 2.0) + settings.YOffset;
+        var taskbarTop = screenHeight - taskbarHeight;
+        var anchorTop = Height <= taskbarHeight
+            ? taskbarTop + ((taskbarHeight - Height) / 2.0)
+            : screenHeight - Height;
+        Top = Math.Clamp(anchorTop + settings.YOffset, 0, Math.Max(0, screenHeight - Height));
+    }
+
+    private static double CalculateWindowHeight(AppSettings settings, double taskbarHeight, double screenHeight)
+    {
+        var taskbarSafeHeight = Math.Clamp(taskbarHeight - 4, 36, taskbarHeight);
+        if (settings.UseSafeFontSizeRange && settings.UseSafeCoverSizeRange)
+        {
+            return taskbarSafeHeight;
+        }
+
+        var fontSize = AppSettings.ClampFontSize(settings.FontSize, settings.UseSafeFontSizeRange);
+        var coverSize = AppSettings.ClampCoverSize(settings.CoverSize, settings.UseSafeCoverSizeRange);
+        var textHeight = Math.Ceiling((fontSize * 2.15) + 12);
+        var coverHeight = Math.Ceiling(coverSize + 10);
+        var contentHeight = Math.Max(36, Math.Max(textHeight, coverHeight));
+        return Math.Clamp(contentHeight, taskbarSafeHeight, Math.Max(taskbarHeight, screenHeight * 0.6));
     }
 
     private void AttachToTaskbarHost()

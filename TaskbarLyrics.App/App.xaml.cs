@@ -49,6 +49,8 @@ public partial class App : System.Windows.Application
 
         _settingsStore = new SettingsStore(settingsPath);
         Settings = _settingsStore.Load();
+        Settings.SpectrumTuning ??= SpectrumTuningSettings.CreateDefault();
+        _spectrumTuningSettings = Settings.SpectrumTuning.Clone();
         ApplyStartupForegroundColor(Settings);
         Settings.StartWithWindows = Settings.StartWithWindows || StartupService.IsEnabled();
         StartupService.SetEnabled(Settings.StartWithWindows);
@@ -83,7 +85,9 @@ public partial class App : System.Windows.Application
 
     public void SaveSettings(AppSettings settings)
     {
-        Settings = settings;
+        var nextSettings = settings.Clone();
+        nextSettings.SpectrumTuning = Settings.SpectrumTuning.Clone();
+        Settings = nextSettings;
         _settingsStore?.Save(Settings);
         _lyricsWindowHost?.ApplySettings(Settings);
     }
@@ -288,6 +292,8 @@ public partial class App : System.Windows.Application
     private void ApplySpectrumTuning(SpectrumTuningSettings settings)
     {
         _spectrumTuningSettings = settings.Clone();
+        Settings.SpectrumTuning = _spectrumTuningSettings.Clone();
+        _settingsStore?.Save(Settings);
         _lyricsWindowHost?.ApplySpectrumTuning(_spectrumTuningSettings);
     }
 
